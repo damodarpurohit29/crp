@@ -1,0 +1,254 @@
+{% extends "admin/base_site.html" %}
+{% load static i18n %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <style>
+        /* Assuming your admin theme (like Jazzmin dark) sets these CSS variables */
+        /* If not, you might need to define them or use direct hex codes */
+        :root {
+            --crp-dashboard-bg: var(--dark-mode-bg, #2c3034); /* Dark background for the page */
+            --crp-card-bg: var(--dark-mode-card-bg, #3a3f44); /* Slightly lighter for cards */
+            --crp-card-border: var(--dark-mode-border, #4a4f54);
+            --crp-text-primary: var(--dark-mode-text, #e9ecef);
+            --crp-text-secondary: var(--dark-mode-text-muted, #adb5bd);
+            --crp-primary-color: var(--primary, #4e73df); /* Admin's primary color */
+            --crp-icon-bg: var(--primary-bg-subtle, #40454a); /* Darker subtle bg for icon circle */
+            --crp-icon-color: var(--primary-light, #859dd6); /* Lighter icon color */
+            --crp-icon-hover-bg: var(--primary, #4e73df);
+            --crp-icon-hover-color: #fff;
+        }
+
+        body {
+            background-color: var(--crp-dashboard-bg) !important; /* Important to override potential defaults */
+            color: var(--crp-text-primary);
+        }
+        .dashboard-container {
+            padding-top: 2rem;
+            padding-bottom: 3rem;
+        }
+
+        .welcome-header {
+            text-align: center;
+            margin-bottom: 3.5rem;
+        }
+        .welcome-header .icon-brand {
+            font-size: 3.5rem;
+            color: var(--crp-primary-color);
+            margin-bottom: 0.75rem;
+            display: block;
+        }
+        .welcome-header h1 {
+            font-weight: 300;
+            font-size: 2.5rem;
+            color: var(--crp-text-primary); /* Use themed text color */
+        }
+        .welcome-header h1 span {
+            font-weight: 600;
+            color: var(--crp-primary-color);
+        }
+        .welcome-header .lead {
+            font-size: 1.15rem;
+            color: var(--crp-text-secondary); /* Use themed secondary text color */
+            max-width: 650px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .welcome-header hr {
+            width: 100px;
+            margin: 2.5rem auto;
+            border-top: 2px solid var(--crp-icon-bg); /* Use a theme color */
+            opacity: 0.75;
+        }
+
+        /* Action Tiles Styles */
+        .action-tile {
+            background-color: var(--crp-card-bg);
+            border: 1px solid var(--crp-card-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+            transition: transform 0.2s ease-out, box-shadow 0.2s ease-out, border-color 0.2s ease-out, background-color 0.2s ease-out;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 180px;
+            text-decoration: none;
+            color: var(--crp-text-secondary); /* Icon and text initial color */
+            box-shadow: 0 4px 6px rgba(0,0,0,0.15); /* Slightly stronger shadow for dark bg */
+        }
+        .action-tile:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 15px rgba(0,0,0,0.25);
+            border-color: var(--crp-primary-color);
+            background-color: var(--crp-card-bg-hover, #42474c); /* Slightly lighter on hover */
+            color: var(--crp-primary-color);
+            text-decoration: none;
+        }
+        .action-tile .tile-icon-wrapper {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background-color: var(--crp-icon-bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1rem;
+            transition: background-color 0.2s ease-out;
+        }
+        .action-tile:hover .tile-icon-wrapper {
+             background-color: var(--crp-icon-hover-bg);
+        }
+        .action-tile .tile-icon {
+            font-size: 1.8rem;
+            color: var(--crp-icon-color);
+            transition: color 0.2s ease-out;
+        }
+         .action-tile:hover .tile-icon {
+            color: var(--crp-icon-hover-color);
+        }
+        .action-tile .tile-title {
+            font-size: 1rem;
+            font-weight: 500;
+            margin-top: 0.25rem;
+            line-height: 1.3;
+            color: var(--crp-text-primary); /* Title text color */
+        }
+         .action-tile:hover .tile-title {
+            color: var(--crp-primary-color); /* Title text color on hover */
+        }
+
+        /* Ensure cards in a row try to maintain alignment */
+        .row.match-height > [class*="col-"] {
+            display: flex;
+            flex-direction: column;
+        }
+         .row.match-height > [class*="col-"] > .action-tile {
+            flex-grow: 1;
+        }
+
+        /* Optional: Custom column width for 5 items - needs to be added to col definitions */
+        @media (min-width: 1200px) { /* xl breakpoint for 5 columns */
+            .col-xl-crp-1-5 {
+                flex: 0 0 20%;
+                max-width: 20%;
+            }
+        }
+
+        /* Small Logout Button */
+        .logout-button-small {
+            padding: 0.5rem 1rem;
+            font-size: 0.9rem;
+            border-radius: 0.25rem;
+            background-color: var(--danger, #dc3545);
+            border-color: var(--danger, #dc3545);
+            color: #fff;
+            transition: background-color 0.15s ease-in-out, border-color 0.15s ease-in-out;
+        }
+        .logout-button-small:hover {
+            background-color: var(--danger-dark, #c82333);
+            border-color: var(--danger-darker, #bd2130);
+            color: #fff;
+        }
+        .logout-button-small .fas {
+            margin-right: 0.3rem;
+        }
+
+    </style>
+{% endblock %}
+
+{% block content_title %}{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4 px-lg-5 px-md-4 px-3 dashboard-container">
+
+    <div class="row mb-5 welcome-header">
+        <div class="col-12">
+            <span class="icon-brand fas fa-rocket"></span>
+            <h1>
+                {% translate "Welcome to" %} <span>CRP Admin Dashboard</span>
+            </h1>
+            <p class="lead">
+                {% translate "Effortlessly manage your applications using the options below or the sidebar." %}
+            </p>
+            <hr>
+        </div>
+    </div>
+
+    {# --- Action Tiles (5 items) --- #}
+    {# Using col-xl-crp-1-5 for 5 columns on extra large screens, adjust col-lg, col-md for desired wrapping #}
+    <div class="row match-height">
+        <div class="col-12 col-sm-6 col-md-4 col-lg-crp-1-5 mb-4"> {# Adjusted for 5 columns for lg and up if you add custom class #}
+             <a href="{% url 'admin:crp_accounting_voucher_changelist' %}" class="action-tile">
+                 <div class="tile-icon-wrapper"><i class="fas fa-file-invoice-dollar tile-icon"></i></div>
+                 <h5 class="tile-title">{% translate "Manage Vouchers" %}</h5>
+             </a>
+        </div>
+
+        <div class="col-12 col-sm-6 col-md-4 col-lg-crp-1-5 mb-4">
+             <a href="{% url 'admin:crp_accounting_party_changelist' %}" class="action-tile">
+                 <div class="tile-icon-wrapper"><i class="fas fa-address-book tile-icon"></i></div>
+                 <h5 class="tile-title">{% translate "Manage Parties" %}</h5>
+             </a>
+        </div>
+
+        <div class="col-12 col-sm-6 col-md-4 col-lg-crp-1-5 mb-4">
+             <a href="{% url 'admin:crp_accounting_account_changelist' %}" class="action-tile">
+                 <div class="tile-icon-wrapper"><i class="fas fa-university tile-icon"></i></div>
+                 <h5 class="tile-title">{% translate "Chart of Accounts" %}</h5>
+             </a>
+        </div>
+
+        {# --- THIS IS THE RESTORED PERIODS & REPORTS TILE --- #}
+        <div class="col-12 col-sm-6 col-md-4 col-lg-crp-1-5 mb-4">
+             <a href="{% url 'admin:crp_accounting_accountingperiod_changelist' %}" class="action-tile">
+                 <div class="tile-icon-wrapper"><i class="fas fa-calendar-alt tile-icon"></i></div>
+                 <h5 class="tile-title">{% translate "Periods & Reports" %}</h5>
+             </a>
+        </div>
+
+        {# --- Tile 5: Company Profile/Settings --- #}
+        <div class="col-12 col-sm-6 col-md-4 col-lg-crp-1-5 mb-4">
+            {% if request.user.is_superuser %}
+                <a href="{% url 'admin:company_company_changelist' %}" class="action-tile">
+                    <div class="tile-icon-wrapper"><i class="fas fa-building tile-icon"></i></div>
+                    <h5 class="tile-title">{% translate "Manage Companies" %}</h5>
+                </a>
+            {% elif request.company %}
+                <a href="{% url 'admin:company_company_change' request.company.pk %}" class="action-tile">
+                    <div class="tile-icon-wrapper"><i class="fas fa-cog tile-icon"></i></div>
+                    <h5 class="tile-title">{% translate "My Company Profile" %}</h5>
+                </a>
+            {% else %}
+                 <div class="action-tile disabled" style="cursor:not-allowed; opacity:0.6;">
+                    <div class="tile-icon-wrapper"><i class="fas fa-cog tile-icon"></i></div>
+                    <h5 class="tile-title">{% translate "Company Profile" %}</h5>
+                </div>
+            {% endif %}
+        </div>
+    </div> {# End Row of Tiles #}
+
+    {# Logout Button - Placed separately and styled smaller #}
+    <div class="row mt-4">
+        <div class="col-12 text-center">
+            <form action="{% url 'admin:logout' %}" method="post" class="d-inline">
+                {% csrf_token %}
+                <button type="submit" class="btn logout-button-small">
+                    <i class="fas fa-sign-out-alt"></i> {% translate "Logout" %}
+                </button>
+            </form>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+
+{% block footer %}
+<footer class="text-center py-4 mt-5 small" style="background-color: var(--crp-card-bg); border-top: 1px solid var(--crp-card-border); color: var(--crp-text-secondary);">
+    <div class="container">
+       © {% now "Y" %} <strong>CRP Edge</strong> - {% translate "All rights reserved." %}
+    </div>
+</footer>
+{% endblock %}
