@@ -31,7 +31,7 @@ BASE_DOMAIN = os.getenv('BASE_DOMAIN', None)
 SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = [
-    'crp-final-1.onrender.com',  # Add your Render domain here
+    'https://leadstocompany-crp.onrender.com',  # Add your Render domain here
     '127.0.0.1',
     'localhost',
 ]
@@ -318,10 +318,10 @@ CORS_ALLOWED_ORIGINS = [
 
 
 CSRF_TRUSTED_ORIGINS = [
-    'https://crp-final-1.onrender.com',
+    'https://leadstocompany-crp.onrender.com',
 ]
 
-GRAPPELLI_ADMIN_TITLE = "My CRP System"
+
 
 
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
