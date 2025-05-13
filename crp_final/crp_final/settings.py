@@ -31,7 +31,7 @@ BASE_DOMAIN = os.getenv('BASE_DOMAIN', None)
 SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = [
-    'https://leadstocompany-crp.onrender.com',  # Add your Render domain here
+    'leadstocompany-crp.onrender.com',  # Add your Render domain here
     '127.0.0.1',
     'localhost',
 ]
