@@ -193,6 +193,77 @@ class CurrencyType(models.TextChoices):
     # Consider adding regional currencies based on your primary user base
 
     OTHER = 'OTHER', _('Other') # Fallback, use sparingly, requires handling
+class InvoiceStatus(models.TextChoices):
+    DRAFT = 'DRAFT', _('Draft')
+    SENT = 'SENT', _('Sent')
+    PARTIALLY_PAID = 'PARTIALLY_PAID', _('Partially Paid')
+    PAID = 'PAID', _('Paid')
+    VOID = 'VOID', _('Void')
+    CANCELLED = 'CANCELLED', _('Cancelled')
+    OVERDUE = 'OVERDUE', _('Overdue')
+
+
+
+class PaymentMethod(models.TextChoices):
+    BANK_TRANSFER = 'BANK_TRANSFER', _('Bank Transfer')
+    CREDIT_CARD = 'CREDIT_CARD', _('Credit Card')
+    CASH = 'CASH', _('Cash')
+    CHECK = 'CHECK', _('Check')
+    ONLINE_PAYMENT = 'ONLINE_PAYMENT', _('Online Payment Gateway')
+    OTHER = 'OTHER', _('Other')
+
+class CreditMemoStatus(models.TextChoices):
+    DRAFT = 'DRAFT', _('Draft')
+    OPEN = 'OPEN', _('Open')
+    PARTIALLY_APPLIED = 'PARTIALLY_APPLIED', _('Partially Applied')
+    FULLY_APPLIED = 'FULLY_APPLIED', _('Fully Applied')
+    VOID = 'VOID', _('Void')
+
+class DocumentSequenceType(models.TextChoices): # NEW ENUM for DocumentSequence
+    SALES_INVOICE = 'SALES_INVOICE', _('Sales Invoice')
+    CREDIT_MEMO = 'CREDIT_MEMO', _('Credit Memo')
+    PURCHASE_ORDER = 'PURCHASE_ORDER', _('Purchase Order') # Example for future
+
+class BillStatus(models.TextChoices):
+    DRAFT = 'DRAFT', _('Draft')
+    PENDING_APPROVAL = 'PENDING_APPROVAL', _('Pending Approval')
+    APPROVED = 'APPROVED', _('Approved')  # Approved for payment
+    REJECTED = 'REJECTED', _('Rejected')
+    SCHEDULED_FOR_PAYMENT = 'SCHEDULED', _('Scheduled for Payment')
+    PARTIALLY_PAID = 'PARTIALLY_PAID', _('Partially Paid')
+    PAID = 'PAID', _('Paid in Full')
+    VOID = 'VOID', _('Void')
+    UNAPPLIED ='UNAPPLIED',_('Unapplied')
+    # OVERDUE can be a calculated property
+
+
+class PaymentStatus(models.TextChoices):
+    DRAFT = 'DRAFT', _('Draft')  # If payments can be drafted
+    PENDING_APPROVAL = 'PENDING_APPROVAL', _('Pending Approval')
+    APPROVED = 'APPROVED', _('Approved for Processing')
+    PROCESSING = 'PROCESSING', _('Processing')  # e.g. bank transfer initiated
+    COMPLETED = 'COMPLETED', _('Completed / Cleared')  # Payment successful
+    FAILED = 'FAILED', _('Failed')  # Payment attempt failed
+    VOID = 'VOID', _('Void')
+    UNAPPLIED = 'UNAPPLIED', _('Unapplied')
+    PARTIALLY_APPLIED = 'PARTIALLY_APPLIED', _('Partially Applied')
+    APPLIED = 'APPLIED', _('Applied')
+    PARTIALLY_PAID = 'PARTIALLY_PAID',_('PARTIALLY PAID')
+
+    # PARTIALLY_APPLIED can be a calculated property for a payment if it's not fully allocated
+
+
+class PaymentMethodType(models.TextChoices):
+    BANK_TRANSFER = 'BANK_TRANSFER', _('Bank Transfer')
+    CHECK = 'CHECK', _('Check')
+    CASH = 'CASH', _('Cash')
+    CREDIT_CARD = 'CREDIT_CARD', _('Credit Card (Company)')
+    DEBIT_CARD = 'DEBIT_CARD', _('Debit Card (Company)')
+    ONLINE_PAYMENT = 'ONLINE_PAYMENT', _('Online Payment Gateway')
+    OTHER = 'OTHER', _('Other')
+
+
+
 
 # --- Removed Enums Comment (Existing, Unchanged) ---
 # - AssetType, LiabilityType, EquityType, ExpenseType, IncomeType (Use AccountGroup hierarchy)

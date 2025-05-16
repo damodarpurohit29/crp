@@ -307,7 +307,7 @@ CACHES = {
     #     # 'TIMEOUT': 300, # Optional: Default timeout for this cache
     # }
 }
-
+X_FRAME_OPTIONS = 'SAMEORIGIN'
 
 PASSWORD_RESET_TIMEOUT=900          # 900 Sec = 15 Min
 
@@ -327,7 +327,6 @@ CSRF_TRUSTED_ORIGINS = [
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # settings.py
-
 JAZZMIN_SETTINGS = {
     "site_title": "CRP Admin",
     "site_header": "CRP Accounting",
@@ -338,22 +337,27 @@ JAZZMIN_SETTINGS = {
     "site_icon": None,
     "welcome_sign": "Welcome to CRP Accounting",
     "copyright": "CRP Edge Ltd",
+
     "search_model": ["accounts.User", "crp_accounting.Party", "crp_accounting.Voucher"],
     "user_avatar": None,
+
     "topmenu_links": [
         {"name": "Home", "url": "admin:index", "permissions": ["auth.view_user"]},
         {"name": "New Voucher", "url": "admin:crp_accounting_voucher_add", "permissions": ["crp_accounting.add_voucher"]},
         {"model": "accounts.User"},
         {"app": "crp_accounting"},
     ],
+
     "usermenu_links": [
-        {"model": "accounts.User"}
+        {"model": "accounts.User"},
     ],
+
     "show_sidebar": True,
-    "navigation_expanded": True,
+    "navigation_expanded": False,  # <-- Collapsible sidebar (dropdown)
     "hide_apps": [],
-    "hide_models": [],
+    "hide_models": [],  # You can optionally hide models if using custom_links below
     "order_with_respect_to": [
+        "crp_accounting",  # app grouping
         "crp_accounting.Voucher",
         "crp_accounting.Account",
         "crp_accounting.Party",
@@ -361,17 +365,18 @@ JAZZMIN_SETTINGS = {
         "crp_accounting.FiscalYear",
         "crp_accounting.AccountingPeriod",
         "crp_accounting.VoucherSequence",
+        "crp_accounting.VoucherLine",
+        "crp_accounting.VoucherApprovalLog",
         "accounts",
         "accounts.User",
         "auth.Group",
-        "crp_accounting.VoucherLine",
-        "crp_accounting.VoucherApprovalLog",
     ],
+
     "icons": {
         "auth": "fas fa-users-cog",
         "auth.Group": "fas fa-users",
         "accounts": "fas fa-id-card",
-        "accounts.user": "fas fa-user-circle",
+        "accounts.User": "fas fa-user-circle",
         "crp_accounting": "fas fa-calculator",
         "crp_accounting.AccountGroup": "fas fa-layer-group",
         "crp_accounting.AccountingPeriod": "far fa-calendar-alt",
@@ -383,27 +388,46 @@ JAZZMIN_SETTINGS = {
         "crp_accounting.VoucherSequence": "fas fa-sort-numeric-down",
         "crp_accounting.Voucher": "fas fa-file-invoice-dollar",
     },
+
     "default_icon_parents": "fas fa-folder",
     "default_icon_children": "fas fa-file",
+
+    # Optional: group related links under a custom section
+    "custom_links": {
+        "Accounting Center": [
+            {"name": "Vouchers", "url": "admin:crp_accounting_voucher_changelist", "icon": "fas fa-file-invoice-dollar"},
+            {"name": "Accounts", "url": "admin:crp_accounting_account_changelist", "icon": "fas fa-university"},
+            {"name": "Parties", "url": "admin:crp_accounting_party_changelist", "icon": "fas fa-address-book"},
+            {"name": "Fiscal Years", "url": "admin:crp_accounting_fiscalyear_changelist", "icon": "fas fa-calendar-check"},
+        ]
+    },
+
     "related_modal_active": True,
-    "show_ui_builder": True, # Set to False in production
+    "show_ui_builder": True,  # Set to False in production
     "changeform_format": "horizontal_tabs",
-    "changeform_format_overrides": {"accounts.user": "collapsible", "auth.group": "vertical_tabs"},
+    "changeform_format_overrides": {
+        "accounts.User": "collapsible",
+        "auth.Group": "vertical_tabs",
+    },
 }
+
 
 JAZZMIN_UI_TWEAKS = {
     "navbar_small_text": False,
     "footer_small_text": False,
     "body_small_text": False,
     "brand_small_text": False,
+
     "brand_colour": False,
     "accent": "accent-primary",
     "navbar": "navbar-white navbar-light",
     "no_navbar_border": False,
+
     "navbar_fixed": False,
     "layout_boxed": False,
     "footer_fixed": False,
     "sidebar_fixed": True,
+
     "sidebar": "sidebar-dark-primary",
     "sidebar_nav_small_text": False,
     "sidebar_disable_expand": False,
@@ -411,14 +435,16 @@ JAZZMIN_UI_TWEAKS = {
     "sidebar_nav_compact_style": False,
     "sidebar_nav_legacy_style": False,
     "sidebar_nav_flat_style": False,
-    "theme": "cosmo", # Experiment with themes like "litera", "lumen", "simplex", "cosmo", "journal"
-    "dark_mode_theme": None, # Optional: "darkly", "cyborg", "slate"
+
+    "theme": "cosmo",  # Options: "litera", "simplex", "journal", etc.
+    "dark_mode_theme": None,  # "darkly", "cyborg", etc.
+
     "button_classes": {
         "primary": "btn-primary",
         "secondary": "btn-secondary",
         "info": "btn-info",
         "warning": "btn-warning",
         "danger": "btn-danger",
-        "success": "btn-success"
+        "success": "btn-success",
     }
 }

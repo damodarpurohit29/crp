@@ -1,0 +1,208 @@
+{% extends "admin/change_form.html" %}
+{% load i18n admin_urls static admin_list %}
+
+{% block title %}
+    {% if add %}
+        {% blocktrans with name=opts.verbose_name %}Add {{ name }}{% endblocktrans %}
+    {% elif original and original.bank_account_id and original.bank_account %} {# Check original and its bank_account relation #}
+        {{ original.bank_account.account_name }} - {{ original.statement_date|date:"Y-m-d" }} - {{ opts.verbose_name }}
+    {% else %}
+        {{ opts.verbose_name|capfirst }}
+    {% endif %} | {{ site_title|default:_('Django site admin') }}
+{% endblock %}
+
+{% block content_title %}
+    <h1>
+        {% if original and original.bank_account_id and original.bank_account %} {# Use original, which is the BankReconciliation instance #}
+            {% blocktrans with bank_acc_name=original.bank_account.account_name stmt_date=original.statement_date|date:"Y-m-d" %}
+                Bank Reconciliation: {{ bank_acc_name }} as of {{ stmt_date }}
+            {% endblocktrans %}
+            ({{ original.get_status_display }})
+        {% elif add %}
+             {% trans "Add Bank Reconciliation" %}
+        {% else %}
+            {% translate "Bank Reconciliation Workspace" %}
+        {% endif %}
+    </h1>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    <form {% if has_file_field %}enctype="multipart/form-data" {% endif %}{% if form_url %}action="{{ form_url }}" {% endif %}method="post" id="{{ opts.model_name }}_form" novalidate>{% csrf_token %}
+        <div>
+            {% if is_popup %}<input type="hidden" name="{{ is_popup_var }}" value="1">{% endif %}
+            {% if to_field %}<input type="hidden" name="{{ to_field_var }}" value="{{ to_field }}">{% endif %}
+
+            {% if messages %}
+                <ul class="messagelist">
+                    {% for message in messages %}
+                        <li{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message|capfirst }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+
+            {% if form.non_field_errors %}
+                <p class="errornote">
+                {% if form.non_field_errors.count == 1 %}{% translate "Please correct the error below." %}{% else %}{% translate "Please correct the errors below." %}{% endif %}
+                </p>
+                {{ form.non_field_errors }}
+            {% endif %}
+
+            {# --- Reconciliation Header Form (Fields from BankReconciliationAdmin fieldsets) --- #}
+            {# This renders the fields like company, bank_account, statement_date, statement_ending_balance #}
+            {# And also the readonly calculated fields if in the fieldset #}
+            <fieldset class="module aligned">
+                {# No explicit <h2> needed if fieldset.name is used by include, or if first fieldset has no name #}
+                {% for fieldset_item in adminform %}
+                    {% include "admin/includes/fieldset.html" with fieldset=fieldset_item %}
+                {% endfor %}
+            </fieldset>
+
+            {# Show workspace only if editing an existing reconciliation that is IN_PROGRESS #}
+            {% if original and original.pk and original.status == original.ReconciliationStatus.IN_PROGRESS.value %}
+                <div style="display: flex; justify-content: space-between; margin-top: 20px; flex-wrap: wrap; gap: 20px;">
+                    {# --- Unreconciled Bank Statement Transactions --- #}
+                    <div style="flex-basis: 48%; min-width: 400px;">
+                        <h3>{% translate "Unreconciled Bank Statement Transactions" %} ({{ unreconciled_bank_transactions|length }})</h3>
+                        <p><small>{% translate "Select ONE bank transaction below." %}</small></p>
+                        <div class="fixed-header-table-container">
+                            <table id="bank-txns-table" class="fixed-header-table">
+                                <thead>
+                                    <tr>
+                                        <th><!-- Select --></th>
+                                        <th>{% translate "Date" %}</th>
+                                        <th>{% translate "Description" %}</th>
+                                        <th style="text-align: right;">{% translate "Withdrawal" %}</th> {# Bank's Debit = Withdrawal #}
+                                        <th style="text-align: right;">{% translate "Deposit" %}</th>    {# Bank's Credit = Deposit #}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for txn in unreconciled_bank_transactions %}
+                                    <tr>
+                                        <td>
+                                            <input type="radio" name="selected_bank_transaction_pk" value="{{ txn.pk }}" id="bank_txn_{{txn.pk}}">
+                                        </td>
+                                        <td><label for="bank_txn_{{txn.pk}}">{{ txn.transaction_date|date:"Y-m-d" }}</label></td>
+                                        <td><label for="bank_txn_{{txn.pk}}">{{ txn.description|truncatechars:45 }}</label></td>
+                                        {# Assuming txn.transaction_type stores "DEBIT" or "CREDIT" from BankStatementTransaction.TransactionType #}
+                                        <td style="text-align: right;">{% if txn.transaction_type == "DEBIT" %}{{ txn.amount|floatformat:2 }}{% else %}-{% endif %}</td>
+                                        <td style="text-align: right;">{% if txn.transaction_type == "CREDIT" %}{{ txn.amount|floatformat:2 }}{% else %}-{% endif %}</td>
+                                    </tr>
+                                    {% empty %}
+                                    <tr><td colspan="5">{% translate "No unreconciled bank transactions for this period." %}</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div style="margin-top: 10px;">
+                            <p>{% translate "For selected bank transaction above, if no GL entry exists:" %}</p>
+                            <button type="submit" name="_create_adjustment_bank_fee" class="button">{% translate "Create GL for Bank Fee/Debit" %}</button>
+                            <button type="submit" name="_create_adjustment_interest_earned" class="button">{% translate "Create GL for Interest/Credit" %}</button>
+                        </div>
+                    </div>
+
+                    {# --- Unreconciled GL (Book) Transactions --- #}
+                    <div style="flex-basis: 48%; min-width: 400px;">
+                        <h3>{% translate "Unreconciled Book (GL) Transactions" %} ({{ unreconciled_gl_lines|length }})</h3>
+                         <p><small>{% translate "Select GL lines to match with the selected bank transaction." %}</small></p>
+                        <div class="fixed-header-table-container">
+                            <table id="gl-lines-table" class="fixed-header-table">
+                                <thead>
+                                    <tr>
+                                        <th><input type="checkbox" id="select-all-gl-lines" title="{% translate 'Select/deselect all' %}"></th>
+                                        <th>{% translate "Date" %}</th>
+                                        <th>{% translate "Vch No." %}</th>
+                                        <th>{% translate "Narration" %}</th>
+                                        <th style="text-align: right;">{% translate "Debit (Book)" %}</th>  {# GL Debit for Bank Account #}
+                                        <th style="text-align: right;">{% translate "Credit (Book)" %}</th> {# GL Credit for Bank Account #}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for line in unreconciled_gl_lines %}
+                                    <tr>
+                                        <td><input type="checkbox" name="selected_gl_line_pks" value="{{ line.pk }}" class="gl-line-checkbox"></td>
+                                        <td>{{ line.voucher.date|date:"Y-m-d" }}</td>
+                                        <td>
+                                            {% if line.voucher_id %}
+                                            <a href="{% url 'admin:crp_accounting_voucher_change' line.voucher.pk %}" target="_blank">
+                                                {{ line.voucher.voucher_number|default:line.voucher.pk }}
+                                            </a>
+                                            {% else %}
+                                                N/A
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ line.narration|default:line.voucher.narration|truncatechars:45 }}</td>
+                                        {# Assuming line.dr_cr stores "DEBIT" or "CREDIT" from DrCrType enum #}
+                                        <td style="text-align: right;">{% if line.dr_cr == "DEBIT" %}{{ line.amount|floatformat:2 }}{% else %}-{% endif %}</td>
+                                        <td style="text-align: right;">{% if line.dr_cr == "CREDIT" %}{{ line.amount|floatformat:2 }}{% else %}-{% endif %}</td>
+                                    </tr>
+                                    {% empty %}
+                                    <tr><td colspan="6">{% translate "No unreconciled GL transactions for this bank account in period." %}</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 20px; padding: 10px; border: 1px solid #ddd; background-color: #f9f9f9; clear: both;">
+                    <h3 style="margin-top:0;">{% translate "Match Selected Items" %}</h3>
+                    <p>{% translate "Select ONE bank transaction and one or more GL lines above, then click 'Perform Match'." %}</p>
+                    <label for="id_match_notes">{% translate "Matching Notes (Optional):" %}</label><br>
+                    <input type="text" name="match_notes" id="id_match_notes" style="width: 80%; margin-bottom:10px;" maxlength="255"><br>
+                    <button type="submit" name="_match_selected_items_action" class="button">{% translate "Perform Match" %}</button>
+                </div>
+
+            {% elif original and original.pk and original.status == original.ReconciliationStatus.RECONCILED.value %}
+                <p class="messagelist success">{% translate "This bank reconciliation is complete and marked as RECONCILED." %}</p>
+            {% elif not original.pk and add %}
+                 <p class="messagelist info">{% translate "Save the reconciliation details above to begin matching transactions." %}</p>
+            {% endif %}
+
+            {# --- Submit Row for main form actions (Save Details, Finalize) --- #}
+            <div class="submit-row">
+                {% if not original or original.status == original.ReconciliationStatus.IN_PROGRESS.value %}
+                    {# On "Add" page, original is None initially. On "Change" page, check status. #}
+                    <input type="submit" value="{% if add %}{% translate 'Save and Start Reconciliation' %}{% else %}{% translate 'Save Reconciliation Progress' %}{% endif %}" class="default" name="_save_reconciliation_details">
+                {% endif %}
+
+                {% if original and original.pk and original.status == original.ReconciliationStatus.IN_PROGRESS.value %}
+                    {% if original.difference is not None and original.difference|abs < 0.01 %} {# Check difference before showing finalize #}
+                        <input type="submit" value="{% translate 'Finalize This Reconciliation' %}" name="_finalize_reconciliation_action" class="button success">
+                    {% else %}
+                         <p class="errornote" style="display: inline-block; margin-left: 10px;">
+                            {% translate "Cannot finalize: The difference is not zero." %}
+                            {% if original.difference_display_for_form_br %}
+                                (Current Difference: {{ original.difference_display_for_form_br|safe }})
+                            {% elif original.difference is not None %}
+                                (Current Difference: {{ original.difference|floatformat:2 }})
+                            {% endif %}
+                         </p>
+                    {% endif %}
+                {% endif %}
+            </div>
+        </div>
+    </form>
+</div>
+<style>
+    .fixed-header-table-container { max-height: 350px; overflow-y: auto; border: 1px solid #ccc; margin-bottom:10px; }
+    .fixed-header-table thead th { position: sticky; top: 0; background-color: #f0f0f0; z-index: 1; border-bottom: 1px solid #ddd; padding: 8px; text-align: left;}
+    .fixed-header-table td, .fixed-header-table th { padding: 6px; border-bottom: 1px solid #eee; white-space: nowrap; }
+    .fixed-header-table tbody tr:hover { background-color: #f5f5f5; }
+    /* Responsive adjustments for smaller screens */
+    @media (max-width: 768px) {
+        div[style*="flex-basis: 48%"] { flex-basis: 100%; }
+    }
+</style>
+<script type="text/javascript">
+    document.addEventListener('DOMContentLoaded', function() {
+        const selectAllGLLines = document.getElementById('select-all-gl-lines');
+        if (selectAllGLLines) {
+            selectAllGLLines.addEventListener('change', function(e) {
+                document.querySelectorAll('.gl-line-checkbox').forEach(cb => cb.checked = e.target.checked);
+            });
+        }
+        // You might add JS to ensure only one radio for bank_txn is selected if issues, but HTML radio group should handle it.
+    });
+</script>
+{% endblock %}

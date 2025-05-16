@@ -6,7 +6,51 @@
 {% block extrastyle %}
     {{ block.super }}
     <link rel="stylesheet" type="text/css" href="{% static 'admin/css/forms.css' %}">
+
+    {% if is_pdf %}
     <style>
+        /* PDF-SPECIFIC STYLES - Hardcoded values for better xhtml2pdf compatibility */
+        body { font-family: "Helvetica", "Arial", sans-serif; color: #333; } /* Base font for PDF */
+        .report-container { max-width: 100%; margin: 0 auto; padding: 5px; } /* Max width for PDF might need to be 100% */
+        .report-selector-forms { background: #f8f9fa; padding: 10px; border: 1px solid #dee2e6; border-radius: 4px; margin-bottom: 20px; display: flex; flex-direction: column; gap: 15px; }
+        .selector-form-section { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+        .selector-form-section label { font-weight: bold; margin-right: 5px; min-width: 90px; }
+        .selector-form-section select,
+        .selector-form-section input[type="date"] { padding: 6px 10px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.85em; flex-grow: 1; max-width: 280px; }
+        .selector-form-section .button { padding: 6px 12px; font-size: 0.85em; background-color: #007bff; color: white; border: 1px solid #007bff; border-radius: 4px; text-decoration: none;}
+        .company-selector-info { font-style: italic; margin-bottom: 8px; color: #6c757d; }
+
+        .report-header-section { margin-bottom: 1em; padding-bottom: 10px; border-bottom: 2px solid #417690; text-align: center; }
+        .report-header-section .company-main-name { font-size: 1.4em; font-weight: bold; color: #417690; margin-bottom: 3px; }
+        .report-header-section .report-main-title { font-size: 1.2em; font-weight: 600; margin-bottom: 8px; color: #333; }
+        .report-meta-info { display: flex; justify-content: space-between; font-size: 0.9em; margin-top: 8px; padding: 0 8px; border-top: 1px dashed #adb5bd; padding-top: 8px; }
+        .report-meta-info p { margin-bottom: 0.2em; }
+
+        .status-balanced { color: #28a745; font-weight: bold; }
+        .status-unbalanced { color: #dc3545; font-weight: bold; }
+
+        #changelist .results { overflow-x: visible; } /* No horizontal scroll for PDF */
+        #result_list { width: 100%; border-collapse: collapse; margin-top: 0; border: 1px solid #dee2e6; font-size: 0.85em; background-color: #ffffff; }
+        #result_list td, #result_list th { padding: 6px 10px; border-bottom: 1px solid #e9ecef; vertical-align: top; text-align: left; }
+        #result_list thead th { background-color: #e9ecef; color: #495057; font-weight: bold; border-bottom: 2px solid #417690; white-space: nowrap; }
+        /* #result_list tbody tr:hover { background-color: #f8f9fa; } PDF doesn't have hover */
+        .numeric { text-align: right !important; font-family: "Courier New", Courier, monospace; white-space: nowrap;}
+        #result_list thead th.numeric { text-align: right; }
+
+        #result_list tfoot .total-row th,
+        #result_list tfoot .total-row td { font-weight: bold; font-size: 1.0em; border-top: 2px solid #adb5bd; padding-top: 8px; padding-bottom: 8px; background-color: #f1f3f5; }
+        #result_list tfoot .total-row th { text-align: right; padding-right: 0.8em;}
+
+        .report-actions { margin-top: 1em; padding-top: 0.8em; border-top: 1px solid #dee2e6; text-align: right; }
+        .report-actions .button { margin-left: 8px; } /* Already styled above */
+
+        .no-results td { text-align: center; padding: 20px !important; color: #6c757d; }
+        .info-message { padding: 8px 12px; background-color: #e2f0fb; border: 1px solid #79aec8; color: #365f8e; border-radius: 4px; margin-bottom: 15px; text-align: center;}
+        .pdf-summary-note { font-size:0.8em; margin-top:5px; color: #6c757d; font-style: italic; text-align: center; }
+    </style>
+    {% else %}
+    <style>
+        /* ORIGINAL STYLES for HTML view (using var()) */
         .report-container { max-width: 1000px; margin: 0 auto; }
         .report-selector-forms { background: var(--changelist-bg); padding: 15px; border: 1px solid var(--border-color); border-radius: 4px; margin-bottom: 25px; display: flex; flex-direction: column; gap: 20px; }
         .selector-form-section { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 15px; }
@@ -37,6 +81,7 @@
         .no-results td { text-align: center; padding: 25px !important; color: var(--text-color-secondary); }
         .info-message { padding: 10px 15px; background-color: var(--selected-row-lighter, #eef); border: 1px solid var(--info-fg, #79aec8); color: var(--info-fg-darker, #365f8e); border-radius: 4px; margin-bottom: 20px; text-align: center;}
     </style>
+    {% endif %}
 {% endblock %}
 
 {% block breadcrumbs %}
@@ -67,21 +112,22 @@
                 <select name="company_id" id="id_company_id_select_tb" onchange="this.form.submit()">
                     <option value="">--- {% translate "Select Company" %} ---</option>
                     {% for comp_item in all_companies %}
+                        {# THIS LINE IS PRESERVED AS REQUESTED #}
                         <option value="{{ comp_item.pk }}" {% if company.pk == comp_item.pk or request.GET.company_id == comp_item.pk %}selected{% endif %}>
                             {{ comp_item.name }}
                         </option>
                     {% endfor %}
                 </select>
-                {% if as_of_date_param %}<input type="hidden" name="as_of_date" value="{{ as_of_date_param }}">{% endif %} {# Pass string param #}
+                {% if as_of_date_param %}<input type="hidden" name="as_of_date" value="{{ as_of_date_param }}">{% endif %}
                 <noscript><button type="submit" class="button">{% translate "Set Company" %}</button></noscript>
             </form>
         {% endif %}
 
-        {% if company or not show_company_selector %} {# Show date selector if company is set OR if it's not a superuser needing to select company first #}
+        {% if company or not show_company_selector %}
             <form method="GET" action="" class="date-selector-form selector-form-section">
                 {% if company %}<input type="hidden" name="company_id" value="{{ company.id }}">{% endif %}
                 <label for="id_as_of_date_tb">{% translate "As of Date:" %}</label>
-                <input type="date" name="as_of_date" id="id_as_of_date_tb" value="{{ as_of_date_param }}" required> {# Use string param directly #}
+                <input type="date" name="as_of_date" id="id_as_of_date_tb" value="{{ as_of_date_param }}" required>
                 <button type="submit" class="button">{% translate "View Report" %}</button>
             </form>
         {% endif %}
@@ -90,11 +136,10 @@
     {% if report_error %}
         <p class="errornote">{{ report_error }}</p>
     {% elif not company and show_company_selector %}
-        {# Superuser needs to select a company, message handled by selector form, or view's messages.info #}
-    {% elif not as_of_date_to_display and company %} {# Company selected, but no valid date processed yet #}
-        {# messages.info would have been shown by the view. This is an additional placeholder. #}
+        {# Message handled by selector form or view's messages.info #}
+    {% elif not as_of_date_to_display and company %}
         <p class="info-message">{% translate "Please select an 'As of Date' to view the Trial Balance." %}</p>
-    {% elif report_data_available and company and as_of_date_to_display %} {# Report can be displayed #}
+    {% elif report_data_available and company and as_of_date_to_display %}
         <div class="report-header-section">
             <div class="company-main-name">{{ company.name }}</div>
             <div class="report-main-title">{% translate "Trial Balance" %}</div>
@@ -111,7 +156,11 @@
                     {% endif %}
                 </p>
             </div>
+            {% if is_pdf %}
+            <p class="pdf-summary-note"><em>{% translate "Showing accounts with non-zero balances or group totals." %}</em></p>
+            {% else %}
             <p style="font-size:0.85em; margin-top:5px; color: var(--text-color-secondary);"><em>{% translate "Showing accounts with non-zero balances or group totals." %}</em></p>
+            {% endif %}
         </div>
 
         <div id="changelist" class="module results">
@@ -125,11 +174,10 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for entry in flat_entries %} {# Iterate through 'flat_entries' for individual account lines #}
+                    {% for entry in flat_entries %}
                     <tr class="{% cycle 'row1' 'row2' %}">
                         <td>{{ entry.account_number }}</td>
                         <td>{{ entry.account_name }}</td>
-                        {# *** CORRECTED LINES BELOW *** #}
                         <td class="numeric">
                             {% if entry.debit != 0 %}
                                 {% with decimal_places=company.currency_decimal_places|default:2 %}
@@ -172,7 +220,6 @@
             <a href="{% url 'crp_accounting_api:admin-download-trial-balance-pdf' %}?company_id={{ company.id }}&as_of_date={{ as_of_date_param }}" class="button">{% translate "Download PDF" %}</a>
         </div>
     {% else %}
-        {# Fallback message if no other condition is met (e.g. no company and not superuser) #}
         <p class="info-message">{% translate "Please select criteria to view the report." %}</p>
     {% endif %}
 </div>

@@ -1,4 +1,3 @@
-{# crp_accounting/templates/admin/crp_accounting/reports/profit_loss_report.html #}
 {% extends "admin/base_site.html" %}
 {% load i18n static l10n humanize %}
 
@@ -21,17 +20,21 @@
         .report-meta-info { display: flex; justify-content: space-around; font-size: 0.95em; margin-top: 10px; padding: 0 10px; border-top: 1px dashed var(--border-color-light); padding-top: 10px; }
         .report-meta-info p { margin-bottom: 0.3em; }
 
-        #changelist .results { overflow-x: auto; }
+        .report-table-container { overflow-x: auto; }
         #result_list { width: 100%; border-collapse: collapse; margin-top: 0; border: 1px solid var(--border-color); font-size: 0.9em; background-color: var(--body-bg); box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         #result_list td, #result_list th { padding: 6px 10px; vertical-align: top; text-align: left; border-bottom: 1px solid var(--border-color-light, #eee); line-height: 1.4; }
         #result_list thead th { background-color: var(--header-bg); color: var(--header-color); font-weight: bold; white-space: nowrap; border-bottom: 2px solid var(--primary); padding-bottom: 8px; position: sticky; top: 0; z-index: 10; }
         #result_list tbody tr:hover { background-color: var(--selected-row, #f5f5f5); }
         .numeric { text-align: right !important; font-family: var(--font-family-monospace, monospace); white-space: nowrap; }
         #result_list thead th.numeric { text-align: right; }
+        #result_list .col-particulars { width: 60%; }
+        #result_list .col-note { width: 10%; text-align: center; }
+        #result_list .col-amount { width: 30%; }
 
         .pl-main-section-title td:first-child { font-weight: bold; font-size: 1.05em; padding-top: 1.2em; color: var(--primary-darker, #3e6d8e); }
-        .pl-main-section-title.no-details td.numeric { visibility: visible; font-weight: bold; }
-        .pl-main-section-title.has-details td.numeric { visibility: hidden; }
+        .pl-main-section-title.no-details td.numeric,
+        .pl-main-section-title.has-note td.numeric { visibility: visible; font-weight: bold; }
+        .pl-main-section-title.has-inline-details.no-note td.numeric { visibility: hidden; }
 
         .pl-account-detail td:first-child { padding-left: 30px !important; }
         .pl-account-detail td { font-size: 0.95em; border-bottom: none !important; padding-top: 3px !important; padding-bottom: 3px !important; }
@@ -40,11 +43,8 @@
         .pl-subtotal.gross-profit td { background-color: var(--selected-row-lighter, #eef); }
 
         .pl-net-income td {
-            font-weight: bold;
-            font-size: 1.1em;
-            border-top: 2px solid var(--primary);
-            border-bottom: 3px double var(--primary);
-            padding-top: 10px; padding-bottom: 10px;
+            font-weight: bold; font-size: 1.1em; border-top: 2px solid var(--primary);
+            border-bottom: 3px double var(--primary); padding-top: 10px; padding-bottom: 10px;
             color: var(--primary-dark, #2c506b);
         }
         .currency-tag { font-size: 0.85em; color: var(--text-muted, #6c757d); margin-left: 5px; }
@@ -53,6 +53,16 @@
         .report-actions .button { margin-left: 10px; }
         .no-results td { text-align: center; padding: 25px !important; color: var(--text-color-secondary); }
         .info-message { padding: 10px 15px; background-color: var(--selected-row-lighter, #eef); border: 1px solid var(--info-fg, #79aec8); color: var(--info-fg-darker, #365f8e); border-radius: 4px; margin-bottom: 20px; text-align: center;}
+
+        .financial-notes-section { margin-top: 40px; padding-top: 20px; border-top: 2px solid var(--primary); }
+        .financial-notes-section h2 { font-size: 1.4em; color: var(--header-color); margin-bottom: 20px; }
+        .note-item { margin-bottom: 25px; }
+        .note-item h3 { font-size: 1.1em; font-weight: bold; margin-bottom: 10px; color: var(--text-color); }
+        .note-item table { width: 100%; max-width: 700px; margin-left: 20px; border-collapse: collapse; font-size: 0.85em; }
+        .note-item table th, .note-item table td { padding: 5px 8px; border: 1px solid var(--border-color-light); text-align: left; }
+        .note-item table th.numeric, .note-item table td.numeric { text-align: right; }
+        .note-item table thead th { background-color: var(--header-bg-lighter); font-weight: bold; }
+        .note-item table tfoot th, .note-item table tfoot td { font-weight: bold; border-top: 1px solid var(--border-color); }
     </style>
 {% endblock %}
 
@@ -117,15 +127,11 @@
     {% if report_error %}
         <p class="errornote">{{ report_error }}</p>
     {% elif not company and show_company_selector %}
-        {# Superuser needs to select a company. The selector form above handles the main prompt. #}
-        {# An additional message could go here if desired, or rely on view messages.info #}
         <p class="info-message">{% translate "Please select a company to view reports." %}</p>
-    {% elif company %} {# Company is selected, now check dates and report_data_available #}
+    {% elif company %}
         {% if not start_date_to_display or not end_date_to_display %}
-            {# Company is selected, but dates are not valid/processed yet #}
             <p class="info-message">{% translate "Please select a 'From' and 'To' date to view the Profit & Loss Statement." %}</p>
         {% elif report_data_available %}
-            {# All conditions met: company selected, dates valid, data available #}
             <div class="report-header-section">
                 <div class="company-main-name">{{ company.name }}</div>
                 <div class="report-main-title">{% translate "Profit and Loss Statement" %}</div>
@@ -137,45 +143,56 @@
                 </div>
             </div>
 
-            <div id="changelist" class="module results">
+            <div class="report-table-container module">
                 <table id="result_list">
                     <colgroup>
-                       <col style="width: 70%;"> {# Particulars #}
-                       <col style="width: 30%;"> {# Amount #}
+                       <col class="col-particulars">
+                       <col class="col-note">
+                       <col class="col-amount">
                     </colgroup>
                     <thead>
                         <tr>
                             <th scope="col">{% translate "Particulars" %}</th>
+                            <th scope="col" style="text-align:center;">{% translate "Note" %}</th>
                             <th scope="col" class="numeric">{% translate "Amount" %} {% if company.default_currency_symbol %}({{ company.default_currency_symbol }}){% endif %}</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for line in report_lines %}
-                            <tr class="{% if line.is_main_section_title %}pl-main-section-title {% if line.accounts %}has-details{% else %}no-details{% endif %}{% endif %}
-                                       {% if line.is_subtotal %}pl-subtotal{% if line.section_key == 'GROSS_PROFIT' %} gross-profit{% endif %}{% endif %}
-                                       {% if line.section_key == 'NET_INCOME' %}pl-net-income{% endif %}
-                                       {% cycle 'row-odd' 'row-even' as pl_row_cycle silent %}">
+                            <tr class="{% if line.is_main_section_title %}pl-main-section-title{% if line.accounts and not line.has_note %} has-inline-details no-note{% elif line.has_note %} has-note{% else %} no-details{% endif %}{% endif %}{% if line.is_subtotal %} pl-subtotal{% if line.section_key == 'GROSS_PROFIT' %} gross-profit{% endif %}{% endif %}{% if line.section_key == 'NET_INCOME' %} pl-net-income{% endif %} {% cycle 'row-odd' 'row-even' as pl_row_cycle_main %}">
                                 <td style="padding-left: {{ line.level|default:0|add:1 }}0px;">
                                     {{ line.title }}
                                 </td>
+                                <td style="text-align:center;">
+                                    {% if line.has_note and line.note_ref %}
+                                        {{ line.note_ref }} {# Display the note_ref as is #}
+                                    {% endif %}
+                                </td>
                                 <td class="numeric">
-                                    {% if line.is_subtotal or line.section_key == 'NET_INCOME' or line.is_main_section_title and not line.accounts %}
+                                    {% if line.is_subtotal or line.section_key == 'NET_INCOME' %}
                                         {% with decimal_places=company.currency_decimal_places|default:2 %}
                                             {{ line.amount|floatformat:decimal_places|intcomma }}
                                         {% endwith %}
+                                    {% elif line.is_main_section_title %}
+                                        {% if line.has_note or not line.accounts %}
+                                            {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                                {{ line.amount|floatformat:decimal_places|intcomma }}
+                                            {% endwith %}
+                                        {% endif %}
                                     {% endif %}
                                 </td>
                             </tr>
 
-                            {% if not line.is_subtotal and line.accounts %}
+                            {% if not line.is_subtotal and line.accounts and not line.has_note %}
                                 {% for acc_detail in line.accounts %}
-                                    <tr class="pl-account-detail {{ pl_row_cycle }}">
+                                    <tr class="pl-account-detail {% cycle 'row-odd' 'row-even' as pl_row_cycle_detail %}">
                                         <td style="padding-left: {{ line.level|default:0|add:2 }}5px;">
                                             {{ acc_detail.account_number }} - {{ acc_detail.account_name }}
                                             {% if acc_detail.currency and acc_detail.currency != company.default_currency_code %}
                                                 <span class="currency-tag">({{ acc_detail.currency }})</span>
                                             {% endif %}
                                         </td>
+                                        <td></td> {# Empty cell for Note column in detail rows #}
                                         <td class="numeric">
                                             {% with decimal_places=company.currency_decimal_places|default:2 %}
                                                 {{ acc_detail.amount|floatformat:decimal_places|intcomma }}
@@ -185,22 +202,63 @@
                                 {% endfor %}
                             {% endif %}
                         {% empty %}
-                            <tr class="no-results"><td colspan="2">{% translate "No profit and loss data found for the selected criteria." %}</td></tr>
+                            <tr><td colspan="3" class="no-results">{% translate "No profit and loss data found for the selected criteria." %}</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
+
+            {% if financial_notes_data %}
+                <div class="financial-notes-section module">
+                    <h2>{% translate "Notes to the Profit and Loss Statement" %}</h2>
+                    {% for note_key, note_content in financial_notes_data.items %}
+                        <div class="note-item">
+                            <h3>{{ note_content.title }}</h3> {# MODIFIED_LINE: Removed note_key from here #}
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>{% translate "Account Detail" %}</th>
+                                        <th class="numeric">{% translate "Amount" %} {% if company.default_currency_symbol %}({{ company.default_currency_symbol }}){% endif %}</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for detail in note_content.details %}
+                                    <tr>
+                                        <td>{{ detail.account_number }} - {{ detail.account_name }}</td>
+                                        <td class="numeric">
+                                            {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                            {{ detail.amount|floatformat:decimal_places|intcomma }}
+                                            {% endwith %}
+                                        </td>
+                                    </tr>
+                                    {% empty %}
+                                    <tr><td colspan="2">{% translate "No details for this note." %}</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                                <tfoot>
+                                    <tr>
+                                        <th style="text-align: right;">{% translate "Total for" %} {{ note_content.title }}</th>
+                                        <th class="numeric">
+                                            {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                            <strong>{{ note_content.total_amount|floatformat:decimal_places|intcomma }}</strong>
+                                            {% endwith %}
+                                        </th>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
 
             <div class="report-actions">
                 <a href="{% url 'crp_accounting_api:admin-download-profit-loss-excel' %}?company_id={{ company.id }}&start_date={{ start_date_param }}&end_date={{ end_date_param }}" class="button">{% translate "Download Excel" %}</a>
                 <a href="{% url 'crp_accounting_api:admin-download-profit-loss-pdf' %}?company_id={{ company.id }}&start_date={{ start_date_param }}&end_date={{ end_date_param }}" class="button">{% translate "Download PDF" %}</a>
             </div>
         {% else %}
-            {# Fallback if report_data_available is False but other conditions were met (should ideally not happen often if view logic is tight) #}
             <p class="info-message">{% translate "Report data could not be generated. Please check your selections or try again." %}</p>
         {% endif %}
     {% else %}
-         {# General fallback if no specific condition above was met (e.g., not superuser and no company from middleware) #}
          <p class="info-message">{% translate "Please select the company and date range to view the report." %}</p>
     {% endif %}
 </div>

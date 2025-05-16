@@ -40,14 +40,24 @@ ACCOUNT_TYPE_TO_NATURE: Dict[str, str] = {
 class PLSection(models.TextChoices):
     """Defines sections for structuring the Profit & Loss statement."""
     REVENUE = 'REVENUE', _('Revenue')
-    COGS = 'COGS', _('Cost of Goods Sold')
+
+    # --- COGS Components for Periodic Calculation ---
+    OPENING_STOCK_COGS = 'OPENING_STOCK_COGS', _('Opening Stock (COGS)')
+    PURCHASES_COGS = 'PURCHASES_COGS', _('Purchases (COGS)')
+    FREIGHT_IN_COGS = 'FREIGHT_IN_COGS', _('Freight-In (COGS)')
+    PURCHASE_RETURNS_COGS_ADJ = 'PURCHASE_RETURNS_COGS_ADJ', _('Purchase Returns Adj. (COGS)')
+    PURCHASE_DISCOUNTS_COGS_ADJ = 'PURCHASE_DISCOUNTS_COGS_ADJ', _('Purchase Discounts Adj. (COGS)')
+    CLOSING_STOCK_COGS_ADJ = 'CLOSING_STOCK_COGS_ADJ', _('Closing Stock Adj. (COGS)')
+    # --- End COGS Components ---
+
+    COGS = 'COGS', _('Cost of Goods Sold (Direct/Perpetual)')  # Keep for direct COGS / Perpetual
+
     OPERATING_EXPENSE = 'OPERATING_EXPENSE', _('Operating Expense')
+    DEPRECIATION_AMORTIZATION = 'DEPR_AMORT', _('Depreciation & Amortization')
     OTHER_INCOME = 'OTHER_INCOME', _('Other Income')
     OTHER_EXPENSE = 'OTHER_EXPENSE', _('Other Expense')
     TAX_EXPENSE = 'TAX_EXPENSE', _('Tax Expense')
-    DEPRECIATION_AMORTIZATION = 'DEPR_AMORT', _('Depreciation & Amortization')
     NONE = 'NONE', _('Not Applicable (Balance Sheet Accounts)')
-
 
 class AccountGroup(TenantScopedModel):
     """
@@ -185,6 +195,7 @@ class Account(TenantScopedModel):
         _("Balance Last Updated"), null=True, blank=True, editable=False,
         help_text=_("Timestamp of the last balance recalculation for 'current_balance'.")
     )
+
 
     class Meta:
         unique_together = (

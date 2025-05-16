@@ -3,15 +3,13 @@ import logging
 from django.contrib import admin, messages
 from django.utils.translation import gettext_lazy as _
 from django.utils.html import format_html
-from django.utils import timezone  # For admin actions updating timestamps
+from django.utils import timezone
 
-# Import your models
+from crp_accounting.models import Account  # Assuming this exists and is correct
 from .models import Company, CompanyGroup, CompanyMembership
+from .models_settings import CompanyAccountingSettings
 
-# Assuming CurrencyType is used in the model for choices, and might be needed for type checks if any
-# from crp_core.enums import CurrencyType # Not strictly needed in admin.py unless doing specific checks
-
-logger = logging.getLogger("company.admin")  # Specific logger for this admin module
+logger = logging.getLogger("company.admin")
 
 
 # =============================================================================
@@ -35,7 +33,7 @@ class CompanyGroupAdmin(admin.ModelAdmin):
     description_short.short_description = _('Description')
 
     def company_count_display(self, obj: CompanyGroup) -> int:
-        return obj.companies.count()  # Assumes related_name='companies'
+        return obj.companies.count()
 
     company_count_display.short_description = _('No. of Companies')
 
@@ -54,57 +52,101 @@ class CompanyMembershipInlineForCompanyAdmin(admin.TabularInline):
     verbose_name = _("User Access")
     verbose_name_plural = _("Manage User Access for this Company")
 
+    def _get_company_effective_status(self, company_obj):  # Helper for ANY company object
+        if company_obj is None: return False
+        if hasattr(company_obj, 'effective_is_active'):
+            return company_obj.effective_is_active
+        if hasattr(company_obj, 'is_active') and hasattr(company_obj, 'is_suspended_by_admin'):
+            return company_obj.is_active and not company_obj.is_suspended_by_admin
+        if hasattr(company_obj, 'is_active'):
+            logger.warning(
+                f"Inline Helper: Company PK {company_obj.pk if company_obj.pk else 'New'} lacks 'effective_is_active' or 'is_suspended_by_admin'. Relying on 'is_active'."
+            )
+            return company_obj.is_active
+        logger.error(
+            f"Inline Helper: Company PK {company_obj.pk if company_obj.pk else 'New'} lacks 'is_active'. Cannot determine status."
+        )
+        return False
+
     def get_readonly_fields(self, request, obj=None):  # obj is the parent Company
-        if obj and obj.pk:  # If editing an existing Company
-            return ('user',)  # User in an existing membership cannot be changed, delete and re-add
+        if obj and obj.pk:
+            return ('user',)
         return ()
 
     def get_formset(self, request, obj=None, **kwargs):
-        # Pass parent Company object to the formset if needed by custom forms.
-        # request._company_admin_parent_obj is set by CompanyAdmin.get_inlines/get_fieldsets
+        # request._company_admin_parent_obj is set by CompanyAdmin.get_fieldsets
         return super().get_formset(request, obj, **kwargs)
 
-    # Your permission logic for the inline - seems complex and specific, assuming correct
-    def has_add_permission(self, request, obj=None) -> bool:  # obj is the parent Company
+    def has_add_permission(self, request, obj=None) -> bool:  # obj is the parent Company instance
+        # (passed by Django when rendering the main Company form)
         if request.user.is_superuser: return True
-        if obj is None: return False  # Cannot add members if company isn't defined yet
-        return CompanyMembership.objects.filter(
-            user=request.user, company=obj,
-            role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
-            is_active_membership=True, company__effective_is_active=True
-        ).exists()
 
-    def has_change_permission(self, request, obj=None) -> bool:  # obj is CompanyMembership instance
-        if request.user.is_superuser: return True
-        parent_company_being_edited = getattr(request, '_company_admin_parent_obj', None)
-        if obj is None:  # Checking permission for adding new memberships within the inline
-            return self.has_add_permission(request,
-                                           parent_company_being_edited) if parent_company_being_edited else False
-        # Check if current user is Owner/Admin of the membership's company
+        parent_company = obj  # 'obj' here IS the parent Company instance
+        if parent_company is None:
+            # This might happen if the inline is somehow processed without a parent context.
+            # Or if called directly with obj=None, rely on _company_admin_parent_obj if available.
+            parent_company = getattr(request, '_company_admin_parent_obj', None)
+            if parent_company is None:
+                logger.warning("has_add_permission (inline) called without parent company context.")
+                return False
+
+        if not self._get_company_effective_status(parent_company):
+            return False
+
         return CompanyMembership.objects.filter(
-            user=request.user, company=obj.company,
+            user=request.user, company=parent_company,
             role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
             is_active_membership=True
         ).exists()
 
-    def has_delete_permission(self, request, obj=None) -> bool:  # obj is CompanyMembership instance
+    def has_change_permission(self, request, obj=None) -> bool:  # obj is CompanyMembership instance OR None
         if request.user.is_superuser: return True
-        if obj is None:
+
+        if obj is None:  # Django asking for permission for the inline itself (e.g. new rows)
             parent_company_being_edited = getattr(request, '_company_admin_parent_obj', None)
-            return self.has_add_permission(request,
-                                           parent_company_being_edited) if parent_company_being_edited else False
+            return self.has_add_permission(request, parent_company_being_edited)
 
-        can_change_this_membership = self.has_change_permission(request, obj)
-        if not can_change_this_membership: return False
+        # If obj is not None, it's a CompanyMembership instance.
+        membership_instance = obj
+        if not hasattr(membership_instance, 'company') or not membership_instance.company:
+            logger.error(
+                f"has_change_permission (inline) on obj (PK {membership_instance.pk}) without company attribute or company is None.")
+            return False
 
-        if obj.user == request.user and obj.role in [CompanyMembership.Role.OWNER.value,
-                                                     CompanyMembership.Role.ADMIN.value]:
-            other_admins_or_owners = obj.company.memberships.filter(
+        if not self._get_company_effective_status(membership_instance.company):
+            return False
+
+        return CompanyMembership.objects.filter(
+            user=request.user, company=membership_instance.company,
+            role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
+            is_active_membership=True
+        ).exists()
+
+    def has_delete_permission(self, request, obj=None) -> bool:  # obj is CompanyMembership instance OR None
+        if request.user.is_superuser: return True
+
+        if obj is None:  # Permission to delete (e.g. checkboxes on new rows)
+            parent_company_being_edited = getattr(request, '_company_admin_parent_obj', None)
+            return self.has_add_permission(request, parent_company_being_edited)
+
+        # If obj is not None, it's a CompanyMembership instance.
+        membership_instance = obj
+
+        if not self.has_change_permission(request, membership_instance):  # Checks user's rights & company status
+            return False
+
+        if membership_instance.user == request.user and \
+                membership_instance.role in [CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value]:
+            if not hasattr(membership_instance, 'company') or not membership_instance.company:
+                logger.error(
+                    f"has_delete_permission (inline) on obj (PK {membership_instance.pk}) without company attribute for sole admin check.")
+                return False  # Cannot check sole admin without company
+
+            other_admins_or_owners = membership_instance.company.memberships.filter(
                 role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
                 is_active_membership=True
-            ).exclude(pk=obj.pk)
+            ).exclude(pk=membership_instance.pk)
             if not other_admins_or_owners.exists():
-                # messages.error(request, _("Cannot delete own membership: sole admin/owner.")) # Message in form save might be better
                 return False
         return True
 
@@ -115,137 +157,123 @@ class CompanyMembershipInlineForCompanyAdmin(admin.TabularInline):
 @admin.register(Company)
 class CompanyAdmin(admin.ModelAdmin):
     list_display_superuser = (
-        'name', 'subdomain_prefix', 'primary_email', 'default_currency_code', 'country_code',  # Added currency
+        'name', 'subdomain_prefix', 'primary_email', 'default_currency_code', 'country_code',
         'effective_is_active_display', 'company_group', 'created_at'
     )
     list_display_client_placeholder = ('display_name', 'primary_email', 'website', 'default_currency_code',
-                                       'effective_is_active_display')  # Added currency
+                                       'effective_is_active_display')
 
     list_filter_superuser = (
         'is_active', 'is_suspended_by_admin', 'country_code', 'company_group',
-        'default_currency_code', 'financial_year_start_month', 'timezone_name'  # Added currency
+        'default_currency_code', 'financial_year_start_month', 'timezone_name'
     )
     search_fields = (
-    'name', 'subdomain_prefix', 'display_name', 'primary_email', 'registration_number', 'tax_id_primary')
+        'name', 'subdomain_prefix', 'display_name', 'primary_email', 'registration_number', 'tax_id_primary')
 
-    # Readonly fields are dynamically set in get_readonly_fields
-    autocomplete_fields = ['company_group', 'created_by_user']  # created_by_user might be set in save_model for new
+    autocomplete_fields = ['company_group', 'created_by_user']
     actions = ['admin_action_make_companies_active', 'admin_action_make_companies_inactive',
                'admin_action_suspend_companies', 'admin_action_unsuspend_companies']
 
-    # Ensure default_currency_code (and optional default_currency_symbol) are in the fieldsets
-    # to be part of the form.
     fieldsets_client_profile = (
         (_('My Company Profile'), {'fields': (
-        'display_name', 'logo', ('primary_email', 'primary_phone'), 'website', 'internal_company_code_display')}),
+            'display_name', 'logo', ('primary_email', 'primary_phone'), 'website', 'internal_company_code_display')}),
         (_('Registered Address'), {'classes': ('collapse',), 'fields': (
-        'address_line1', 'address_line2', 'city', 'state_province_region', 'postal_code', 'country_code')}),
+            'address_line1', 'address_line2', 'city', 'state_province_region', 'postal_code', 'country_code')}),
         (_('Operational Settings'), {'classes': ('collapse',), 'fields': (
-        'default_currency_code', 'default_currency_symbol', 'financial_year_start_month', 'timezone_name')}),
-        # default_currency_symbol added
+            'default_currency_code', 'default_currency_symbol', 'financial_year_start_month', 'timezone_name')}),
         (_('Tax Information'), {'classes': ('collapse',), 'fields': ('registration_number', 'tax_id_primary')}),
         (_('Account Status'), {'fields': ('effective_is_active_display_form',)}),
     )
-    fieldsets_superuser_platform_admin = (
-        (_('Platform Administration & SaaS Settings'), {'fields': (
-        'name', 'subdomain_prefix', 'internal_company_code', 'company_group', 'is_active', 'is_suspended_by_admin',
-        'created_by_user')}),
-    )
-    # Simplified combined fieldsets to ensure all relevant fields are included for SU
-    # This structure assumes client_profile fieldsets define all user-editable company data
+
     fieldsets_superuser_combined = (
         (_('Platform Administration & SaaS Settings'), {'fields': (
-        'name', 'subdomain_prefix', 'internal_company_code', 'company_group', 'is_active', 'is_suspended_by_admin',
-        'created_by_user')}),
+            'name', 'subdomain_prefix', 'internal_company_code', 'company_group', 'is_active', 'is_suspended_by_admin',
+            'created_by_user')}),
         (_('Company Client-Visible Profile'),
          {'fields': ('display_name', 'logo', ('primary_email', 'primary_phone'), 'website')}),
-        # Removed internal_company_code_display as internal_company_code is editable by SU
         (_('Company Client-Visible Address'), {'fields': (
-        'address_line1', 'address_line2', 'city', 'state_province_region', 'postal_code', 'country_code')}),
+            'address_line1', 'address_line2', 'city', 'state_province_region', 'postal_code', 'country_code')}),
         (_('Company Client-Visible Operational'), {'fields': (
-        'default_currency_code', 'default_currency_symbol', 'financial_year_start_month', 'timezone_name')}),
+            'default_currency_code', 'default_currency_symbol', 'financial_year_start_month', 'timezone_name')}),
         (_('Company Client-Visible Tax Info'), {'fields': ('registration_number', 'tax_id_primary')}),
         (_('Audit Trail'),
          {'fields': ('created_at', 'updated_at', 'created_by_user_display'), 'classes': ('collapse',)}),
     )
 
-    # --- Custom Display Methods ---
+    def _get_company_effective_status(self, company_obj):
+        if company_obj is None: return False
+        # Assuming Company model has 'effective_is_active' property
+        if hasattr(company_obj, 'effective_is_active'):
+            return company_obj.effective_is_active
+        # Fallback if property not defined
+        if hasattr(company_obj, 'is_active') and hasattr(company_obj, 'is_suspended_by_admin'):
+            return company_obj.is_active and not company_obj.is_suspended_by_admin
+        if hasattr(company_obj, 'is_active'):
+            logger.warning(
+                f"CompanyAdmin Helper: Company PK {company_obj.pk if company_obj.pk else 'New'} lacks 'effective_is_active' or 'is_suspended_by_admin'. Relying on 'is_active'."
+            )
+            return company_obj.is_active
+        logger.error(
+            f"CompanyAdmin Helper: Company PK {company_obj.pk if company_obj.pk else 'New'} lacks 'is_active'. Cannot determine status."
+        )
+        return False
+
     def effective_is_active_display(self, obj: Company) -> str:
-        if obj.effective_is_active:
+        if self._get_company_effective_status(obj):
             return format_html('<span style="color: green;">✅ {}</span>', _('Active'))
-        elif obj.is_suspended_by_admin:
+        elif obj and hasattr(obj, 'is_suspended_by_admin') and obj.is_suspended_by_admin:
             return format_html('<span style="color: red;">❌ {}</span>', _('Suspended'))
         return format_html('<span style="color: orange;">➖ {}</span>', _('Inactive'))
 
     effective_is_active_display.short_description = _('Effective Status')
     effective_is_active_display.admin_order_field = 'is_active'
 
-    def effective_is_active_display_form(self, obj: Company) -> str:  # For readonly display in form
-        if obj is None or not hasattr(obj, 'effective_is_active'): return "---"
-        if obj.effective_is_active:
+    def effective_is_active_display_form(self, obj: Company) -> str:
+        if obj is None: return "---"
+        if self._get_company_effective_status(obj):
             return _('✅ Account is active.')
-        elif obj.is_suspended_by_admin:
+        elif hasattr(obj, 'is_suspended_by_admin') and obj.is_suspended_by_admin:
             return _('❌ Account Suspended by Admin.')
         return _('➖ Account Inactive.')
 
     effective_is_active_display_form.short_description = _('Current Account Status')
 
     def created_by_user_display(self, obj: Company) -> str:
-        return obj.created_by_user.get_name() if obj.created_by_user else _("System/N/A")
+        return obj.created_by_user.get_full_name() if obj.created_by_user else _("System/N/A")
 
     created_by_user_display.short_description = _('Registered By')
-    created_by_user_display.admin_order_field = 'created_by_user__name'  # Ensure user model has name
+    # Ensure your User model has a 'name' field or change this to an existing field like 'email'
+    created_by_user_display.admin_order_field = 'created_by_user__name'
 
-    def internal_company_code_display(self, obj: Company) -> str:  # For readonly display
+    def internal_company_code_display(self, obj: Company) -> str:
         return obj.internal_company_code or "---"
 
     internal_company_code_display.short_description = _('Company Code (Internal)')
 
-    # --- Dynamic Admin Configurations ---
     def get_list_display(self, request):
         return self.list_display_superuser if request.user.is_superuser else self.list_display_client_placeholder
 
     def get_list_filter(self, request):
-        return self.list_filter_superuser if request.user.is_superuser else ()  # Client admins likely don't filter global list
+        return self.list_filter_superuser if request.user.is_superuser else ()
 
     def get_readonly_fields(self, request, obj=None):
-        ro_fields = set()  # Start with a set to avoid duplicates
-        is_su = request.user.is_superuser
-
-        # Base readonly fields from Django's ModelAdmin (like 'pk' if not editable)
-        ro_fields.update(super().get_readonly_fields(request, obj) or [])
-
-        # Common audit fields are always readonly
+        ro_fields = set(super().get_readonly_fields(request, obj) or [])
         ro_fields.update(['created_at', 'updated_at', 'created_by_user_display', 'effective_is_active_display_form'])
 
-        if is_su:
-            if obj and obj.pk:  # If editing existing company as SU
-                ro_fields.add('created_by_user')  # Typically not changed after creation
-        else:  # Client admin
-            ro_fields.update([
-                'name', 'subdomain_prefix', 'company_group', 'internal_company_code',
-                'is_active', 'is_suspended_by_admin', 'created_by_user',
-                # Client admin should not change platform/SaaS settings directly
-            ])
-            # If default_currency_symbol is auto-derived, make it readonly for client.
-            # If they can set it manually and it's not auto-derived, remove this.
-            if hasattr(self.model, 'default_currency_symbol'):
-                ro_fields.add('default_currency_symbol')
+        if request.user.is_superuser:
+            if obj and obj.pk: ro_fields.add('created_by_user')
+        else:
+            ro_fields.update(['name', 'subdomain_prefix', 'company_group', 'internal_company_code',
+                              'is_active', 'is_suspended_by_admin', 'created_by_user'])
+            if hasattr(self.model, 'default_currency_symbol'): ro_fields.add('default_currency_symbol')
 
-        if obj and obj.pk:  # For any existing object
-            if 'subdomain_prefix' not in ro_fields: ro_fields.add(
-                'subdomain_prefix')  # Usually not changed after creation
-            # `internal_company_code` is editable for SU as per fieldsets, readonly for client.
-
-        # Ensure display-only version of internal code is readonly
-        if 'internal_company_code_display' not in ro_fields:
-            ro_fields.add('internal_company_code_display')
-
+        if obj and obj.pk:
+            if 'subdomain_prefix' not in ro_fields: ro_fields.add('subdomain_prefix')
+        if 'internal_company_code_display' not in ro_fields: ro_fields.add('internal_company_code_display')
         return tuple(ro_fields)
 
     def get_fieldsets(self, request, obj=None):
-        # Store parent object on request for inlines to use for context
-        request._company_admin_parent_obj = obj if obj else None
+        request._company_admin_parent_obj = obj  # Store for inline context
         if request.user.is_superuser:
             return self.fieldsets_superuser_combined
         return self.fieldsets_client_profile
@@ -254,177 +282,80 @@ class CompanyAdmin(admin.ModelAdmin):
         qs = super().get_queryset(request).select_related('company_group', 'created_by_user')
         if request.user.is_superuser:
             return qs
-        # Non-SUs (client admins) can only see/manage companies they are Owner or Admin of.
         user_administered_company_ids = CompanyMembership.objects.filter(
             user=request.user,
             role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
             is_active_membership=True,
-            company__is_active=True  # <<< CORRECTED: Use the actual database field
+            company__is_active=True  # DB field
         ).values_list('company_id', flat=True)
-        return qs.filter(pk__in=list(user_administered_company_ids)) # Ensure list for safety if queryset is large
+        return qs.filter(pk__in=list(user_administered_company_ids))
 
-    def get_inlines(self, request, obj):  # obj is the Company instance
-        # request._company_admin_parent_obj is set in get_fieldsets
-        if obj is None:  # No inlines on "add" page for Company
-            return []
+    def get_inlines(self, request, obj):  # obj is Company instance
+        if obj is None: return []
+        if request.user.is_superuser: return [CompanyMembershipInlineForCompanyAdmin]
 
-        if request.user.is_superuser:
-            return [CompanyMembershipInlineForCompanyAdmin]
+        can_manage_this_company_members = CompanyMembership.objects.filter(
+            user=request.user, company=obj,
+            role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
+            is_active_membership=True
+        ).exists()
 
-        # Client admin (Owner/Admin of the company being viewed) can manage members
-        # request.company from middleware might be the company they are "acting within"
-        # obj is the company record being viewed/edited on this admin page
-        if getattr(request, 'company', None) == obj and \
-                CompanyMembership.objects.filter(
-                    user=request.user, company=obj,
-                    role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
-                    is_active_membership=True  # User's membership for this company must be active
-                ).exists():
+        if can_manage_this_company_members and self._get_company_effective_status(obj):
             return [CompanyMembershipInlineForCompanyAdmin]
         return []
 
-    # --- Permission Methods ---
     def has_add_permission(self, request) -> bool:
-        return request.user.is_superuser  # Only SUs can create new Company tenants via this global admin
-
-    def has_delete_permission(self, request, obj=None) -> bool:
-        # Deleting a company is a major operation. Usually restricted to SUs and might involve
-        # a "soft delete" or "archive" process rather than true DB deletion.
         return request.user.is_superuser
 
-    def has_change_permission(self, request, obj=None) -> bool:
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return request.user.is_superuser
+
+    def has_change_permission(self, request, obj=None) -> bool:  # obj is Company instance
         if request.user.is_superuser: return True
-        if obj is not None:  # Viewing/editing an existing company
-            # Client admin can change their own company if their membership is Owner/Admin,
-            # their membership is active, AND the company itself is effectively active.
-            return CompanyMembership.objects.filter(
+        if obj is not None:
+            can_manage_this_company = CompanyMembership.objects.filter(
                 user=request.user, company=obj,
                 role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
                 is_active_membership=True
-            ).exists() and obj.effective_is_active
-        return False  # Cannot change if no object (e.g. on general list view if not SU)
-
-    def has_view_permission(self, request, obj=None) -> bool:
-        if request.user.is_superuser:
-            return True
-
-        # Check if the current user has any active membership in any effectively active company.
-        # This is a base check: if they have no such memberships, they can't view anything in this admin.
-        base_access_qs = CompanyMembership.objects.filter(
-            user=request.user,
-            is_active_membership=True,
-            company__is_active=True  # <<< CORRECTED HERE
-        )
-        if not base_access_qs.exists():
-            return False
-
-        if obj is not None:  # Viewing a specific CompanyMembership detail page
-            # User can view their own membership.
-            if obj.user_id == request.user.pk:
-                # Ensure the company of the membership being viewed is also active
-                return obj.company.is_active  # Use the direct field
-
-            # User can view other memberships if they are an Owner/Admin of THAT membership's company.
-            can_manage_members_of_obj_company = base_access_qs.filter(
-                company=obj.company,  # The company of the membership being viewed
-                role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value]
             ).exists()
-            if can_manage_members_of_obj_company:
-                return True
+            return can_manage_this_company and self._get_company_effective_status(obj)
+        return False
 
-            # Optional: Allow viewing colleagues within the same company if desired (adjust this rule if too broad)
-            # This means if a user is an active member of obj.company (in any role), they can see other members of that company.
-            # is_member_of_obj_company = base_access_qs.filter(company=obj.company).exists()
-            # if is_member_of_obj_company:
-            #     return True
+    def has_view_permission(self, request, obj=None) -> bool:  # obj is Company instance
+        if request.user.is_superuser: return True
+        if obj is not None:
+            can_manage_this_company = CompanyMembership.objects.filter(
+                user=request.user, company=obj,
+                role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
+                is_active_membership=True
+            ).exists()
+            # For viewing, allow if they are owner/admin OR if they are any active member of an active company
+            is_member_of_this_company = CompanyMembership.objects.filter(
+                user=request.user, company=obj, is_active_membership=True
+            ).exists()
 
-            return False  # Default to deny if none of the above conditions for viewing a specific object are met
+            return (can_manage_this_company or is_member_of_this_company) and self._get_company_effective_status(obj)
 
-        # For the CompanyMembership list view (obj is None):
-        # Allow access if the user is an Owner/Admin of at least one active company,
-        # as their queryset will be filtered to only show memberships they can manage.
-        return base_access_qs.filter(
-            role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value]
+        # List view for non-SU: allow if they are owner/admin of at least one active company
+        return CompanyMembership.objects.filter(
+            user=request.user,
+            role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
+            is_active_membership=True,
+            company__is_active=True  # DB field
         ).exists()
-    # --- SAVE MODEL WITH DETAILED LOGGING ---
+
     def save_model(self, request, obj: Company, form, change):
-        """
-        Save the Company instance. Includes detailed logging to trace default_currency_code.
-        """
+        user_identifier = request.user.username if hasattr(request.user, 'username') and request.user.username else str(
+            request.user.pk)
         action = "Changing" if change else "Adding"
-        log_prefix = f"CompanyAdmin SaveModel (User:{request.user.name}, Action:{action}, PK:{obj.pk or 'NEW'}):"
+        log_prefix = f"CompanyAdmin SaveModel (User:{user_identifier}, Action:{action}, PK:{obj.pk or 'NEW'}):"
         logger.info(f"{log_prefix} --- Initiating save ---")
-
-        original_currency_on_obj_entry = obj.default_currency_code if obj.pk else "N/A (New Record before form bind)"
-
-        # The 'obj' passed by Django admin to save_model has ALREADY been updated
-        # with form.cleaned_data by Django's ModelAdmin._changeform_view or _add_view.
-        # So, obj.default_currency_code here should reflect the submitted form value if the field was part of the form.
-
-        submitted_currency_via_form_cleaned_data = form.cleaned_data.get(
-            'default_currency_code') if form.is_valid() else "Form Invalid or Field Missing"
-        logger.info(
-            f"{log_prefix} 1. Form cleaned_data['default_currency_code'] (if valid): '{submitted_currency_via_form_cleaned_data}'")
-        logger.info(
-            f"{log_prefix} 2. obj.default_currency_code AT ENTRY (should match form if field was bound): '{obj.default_currency_code}'")
-        if obj.pk and original_currency_on_obj_entry != obj.default_currency_code:
-            logger.info(
-                f"{log_prefix} Note: obj.default_currency_code ('{obj.default_currency_code}') differs from original DB value ('{original_currency_on_obj_entry}') due to form binding.")
-
-        # Apply custom logic (like setting created_by_user)
-        if not change and not obj.created_by_user_id and request.user.is_superuser:
+        if not change and not obj.created_by_user_id and request.user.is_authenticated and request.user.is_superuser:
             obj.created_by_user = request.user
-            logger.info(f"{log_prefix} Set created_by_user to: {request.user.name}")
-
-        logger.info(
-            f"{log_prefix} 3. obj.default_currency_code BEFORE super().save_model() call: '{obj.default_currency_code}'")
-
-        try:
-            # This call will trigger:
-            # 1. obj.full_clean() (unless specific fields are excluded by the form meta or admin)
-            # 2. pre_save signals for Company model
-            # 3. obj.save() -> Company.save() method
-            # 4. post_save signals for Company model
-            super().save_model(request, obj, form, change)
-            logger.info(f"{log_prefix} super().save_model() completed successfully.")
-        except Exception as e:
-            logger.error(f"{log_prefix} Error during super().save_model(): {e}", exc_info=True)
-            # Let Django admin handle displaying the error message to the user
-            raise  # Re-raise the exception to let admin process it
-
-        # Verify the value in the database after all operations
-        try:
-            # Refresh only the specific field to see its final state in the DB
-            # This avoids overwriting other in-memory changes if any happened in post_save signals
-            # that didn't also save to DB.
-            refreshed_obj_for_check = Company.objects.get(pk=obj.pk)
-            final_db_currency = refreshed_obj_for_check.default_currency_code
-            logger.info(
-                f"{log_prefix} 4. default_currency_code AFTER ALL SAVES (fetched from DB): '{final_db_currency}'")
-
-            # Compare with what was intended from the form
-            if final_db_currency != submitted_currency_via_form_cleaned_data and \
-                    submitted_currency_via_form_cleaned_data not in ["Form Invalid or Field Missing", None]:
-                logger.critical(
-                    f"{log_prefix} CRITICAL MISMATCH DETECTED: "
-                    f"Form submitted currency '{submitted_currency_via_form_cleaned_data}', "
-                    f"but database has '{final_db_currency}'. "
-                    f"The value was likely changed in Company.save() or a pre_save signal."
-                )
-                messages.warning(request,
-                                 _("The currency code may not have saved as expected. Please verify the Operational Settings."))
-            elif final_db_currency == submitted_currency_via_form_cleaned_data:
-                logger.info(f"{log_prefix} Currency code successfully saved as '{final_db_currency}'.")
-
-        except Company.DoesNotExist:
-            logger.error(
-                f"{log_prefix} Company PK {obj.pk} not found after save_model. Cannot verify final currency in DB.")
-        except Exception as e:
-            logger.error(f"{log_prefix} Error refreshing Company object from DB after save: {e}", exc_info=True)
-
+            logger.info(f"{log_prefix} Set created_by_user to: {request.user.get_full_name()}")
+        super().save_model(request, obj, form, change)
         logger.info(f"{log_prefix} --- Save complete ---")
 
-    # --- Admin Actions ---
     @admin.action(description=_("Activate & Unsuspend selected companies"))
     def admin_action_make_companies_active(self, request, queryset):
         updated_count = queryset.update(is_active=True, is_suspended_by_admin=False, updated_at=timezone.now())
@@ -447,18 +378,16 @@ class CompanyAdmin(admin.ModelAdmin):
 
 
 # =============================================================================
-# CompanyMembership Admin
+# CompanyMembership Admin (Separate, not inline)
 # =============================================================================
 @admin.register(CompanyMembership)
 class CompanyMembershipAdmin(admin.ModelAdmin):
-    # ... (Your CompanyMembershipAdmin code - looks well-structured)
     list_display = ('user_display', 'company_display', 'role_display', 'is_active_membership',
                     'is_default_for_user', 'effective_can_access_display', 'date_joined')
     list_filter_base = ('role', 'is_active_membership', 'is_default_for_user')
-    search_fields = ('user__name', 'user__email', 'user__first_name', 'user__last_name',
-                     'company__name', 'company__subdomain_prefix')
+    search_fields = ('user__name', 'user__email', 'company__name', 'company__subdomain_prefix')
     autocomplete_fields = ['user', 'company']
-    readonly_fields = ('date_joined', 'last_accessed_at_display')  # Add 'id' if UUID and you want to see it
+    readonly_fields = ('date_joined', 'last_accessed_at_display')
     actions = ['admin_action_make_memberships_active', 'admin_action_make_memberships_inactive']
     fieldsets = (
         (None, {'fields': ('user', 'company', 'role')}),
@@ -466,12 +395,19 @@ class CompanyMembershipAdmin(admin.ModelAdmin):
         (_('Audit Information'), {'fields': ('date_joined', 'last_accessed_at_display'), 'classes': ('collapse',)}),
     )
 
-    # Display methods
+    def _get_company_effective_status(self, company_obj):
+        if company_obj is None: return False
+        if hasattr(company_obj, 'effective_is_active'): return company_obj.effective_is_active
+        if hasattr(company_obj, 'is_active') and hasattr(company_obj, 'is_suspended_by_admin'):
+            return company_obj.is_active and not company_obj.is_suspended_by_admin
+        if hasattr(company_obj, 'is_active'): return company_obj.is_active
+        return False
+
     def user_display(self, obj: CompanyMembership):
-        return obj.user.get_full_name() or obj.user.get_name() if obj.user else _("User Deleted")
+        return obj.user.get_full_name() if obj.user else _("User Deleted")
 
     user_display.short_description = _('User')
-    user_display.admin_order_field = 'user__last_name'
+    user_display.admin_order_field = 'user__name'
 
     def company_display(self, obj: CompanyMembership) -> str:
         return obj.company.name if obj.company else _("Company Deleted")
@@ -491,168 +427,273 @@ class CompanyMembershipAdmin(admin.ModelAdmin):
     last_accessed_at_display.short_description = _('Last Accessed')
 
     def effective_can_access_display(self, obj: CompanyMembership) -> str:
-        return format_html('<span style="color: green;">✅ {}</span>', _('Can Access')) if obj.effective_can_access \
-            else format_html('<span style="color: red;">❌ {}</span>', _('No Access'))
+        can_access = False
+        if hasattr(obj, 'effective_can_access'):
+            can_access = obj.effective_can_access
+        elif obj.is_active_membership and obj.company and self._get_company_effective_status(
+                obj.company) and obj.user.is_active:
+            can_access = True
+        style = "color: green;" if can_access else "color: red;"
+        symbol = "✅" if can_access else "❌"
+        text = _('Can Access') if can_access else _('No Access')
+        return format_html(f'<span style="{style}">{symbol} {text}</span>')
 
     effective_can_access_display.short_description = _('Effective Access')
 
-    # No easy admin_order_field for a property that involves multiple related models.
-
-    # Dynamic configurations
     def get_list_filter(self, request):
         return ('company',) + self.list_filter_base if request.user.is_superuser else self.list_filter_base
 
     def get_queryset(self, request):
         qs = super().get_queryset(request).select_related('user', 'company', 'company__created_by_user')
         if request.user.is_superuser: return qs
+
         user_manageable_company_ids = CompanyMembership.objects.filter(
             user=request.user,
             role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
-            is_active_membership=True, company__effective_is_active=True
+            is_active_membership=True,
+            company__is_active=True  # DB field
         ).values_list('company_id', flat=True)
+        # Show all memberships of companies they manage
         return qs.filter(company_id__in=list(user_manageable_company_ids))
 
     def get_form(self, request, obj=None, **kwargs):
         form = super().get_form(request, obj, **kwargs)
         if not request.user.is_superuser:
+            # Companies user can manage (is Owner/Admin of and are active)
             user_manageable_companies_qs = Company.objects.filter(
                 pk__in=CompanyMembership.objects.filter(
                     user=request.user,
                     role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
                     is_active_membership=True
                 ).values_list('company_id', flat=True),
-                effective_is_active=True
+                is_active=True  # DB Field
             ).distinct().order_by('name')
 
             if 'company' in form.base_fields:
                 form.base_fields['company'].queryset = user_manageable_companies_qs
                 if user_manageable_companies_qs.count() == 1 and (
-                        obj is None or obj.company_id == user_manageable_companies_qs.first().pk):
+                        obj is None or (obj and obj.company_id == user_manageable_companies_qs.first().pk)):
                     form.base_fields['company'].initial = user_manageable_companies_qs.first()
-                    form.base_fields['company'].disabled = True
+                    # form.base_fields['company'].disabled = True # Maybe not disable, allow choice if they become admin of more
                 elif not user_manageable_companies_qs.exists():
                     form.base_fields['company'].queryset = Company.objects.none()
         return form
 
-    # Permissions
     def has_add_permission(self, request) -> bool:
-        if request.user.is_superuser:
-            return True
-        # Non-superusers can add memberships if they are an active Owner or Admin
-        # of at least one effectively active company.
-        # The form itself (get_form) will limit which company they can add to.
+        if request.user.is_superuser: return True
+        # Can add if they are Owner/Admin of at least one active company
         return CompanyMembership.objects.filter(
             user=request.user,
             role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
             is_active_membership=True,
-            company__is_active=True  # <<< CORRECTED
+            company__is_active=True  # DB field
         ).exists()
 
-    def has_change_permission(self, request, obj=None) -> bool:
+    def has_change_permission(self, request, obj=None) -> bool:  # obj is CompanyMembership
         if request.user.is_superuser: return True
         if obj is not None:
             return CompanyMembership.objects.filter(
                 user=request.user, company=obj.company,
                 role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
                 is_active_membership=True
-            ).exists()
-        return self.has_add_permission(request)
+            ).exists() and self._get_company_effective_status(obj.company)
+        return self.has_add_permission(request)  # For new item row
 
-    def has_delete_permission(self, request, obj=None) -> bool:
+    def has_delete_permission(self, request, obj=None) -> bool:  # obj is CompanyMembership
         if request.user.is_superuser: return True
         if obj is not None:
-            can_change = self.has_change_permission(request, obj)
-            if not can_change: return False
+            if not self.has_change_permission(request, obj): return False
             if obj.user == request.user and obj.role in [CompanyMembership.Role.OWNER.value,
                                                          CompanyMembership.Role.ADMIN.value]:
-                # Check if there are other active Owner/Admin users in the same company
                 other_admins_or_owners = obj.company.memberships.filter(
                     role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
                     is_active_membership=True
                 ).exclude(pk=obj.pk)
-                if not other_admins_or_owners.exists():
-                    # messages.error(request, _("Cannot delete sole admin/owner membership for {}.").format(obj.company.name)) # Message on save is better
-                    return False
+                if not other_admins_or_owners.exists(): return False
             return True
-        return self.has_add_permission(request)
+        return self.has_add_permission(request)  # For new item row
 
-    def has_view_permission(self, request, obj=None) -> bool:
-        if request.user.is_superuser:
-            return True
+    def has_view_permission(self, request, obj=None) -> bool:  # obj is CompanyMembership
+        if request.user.is_superuser: return True
 
-        # Check if the current user has any active membership in any effectively active company.
-        current_user_memberships = CompanyMembership.objects.filter(
-            user=request.user,
-            is_active_membership=True,
-            company__is_active=True  # <<< CORRECTED HERE
+        current_user_active_memberships_in_active_companies = CompanyMembership.objects.filter(
+            user=request.user, is_active_membership=True, company__is_active=True
         )
+        if not current_user_active_memberships_in_active_companies.exists(): return False
 
-        if not current_user_memberships.exists():
-            return False  # If user has no active memberships in active companies, they can't view anything here.
-
-        if obj is not None:  # Viewing a specific CompanyMembership detail page
-            # User can view their own membership, provided its company is active (already checked by base_access_qs).
-            if obj.user_id == request.user.pk:
-                # We already know obj.company.is_active is true from the initial current_user_memberships check
-                # if obj.company was one of their active companies.
-                # However, if obj.company is NOT one of their active companies, this path might not be hit
-                # if the previous `if not current_user_memberships.exists()` returned False.
-                # To be safe, ensure obj.company is active.
-                return obj.company.is_active  # Checking the specific company of the object being viewed
-
-            # User can view other memberships if they are an Owner/Admin of THAT membership's company.
-            can_manage_members_of_obj_company = current_user_memberships.filter(
-                company=obj.company,  # The company of the membership being viewed
+        if obj is not None:
+            if not self._get_company_effective_status(obj.company): return False
+            if obj.user_id == request.user.pk: return True
+            return current_user_active_memberships_in_active_companies.filter(
+                company=obj.company,
                 role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value]
             ).exists()
-            if can_manage_members_of_obj_company:  # And obj.company must be active (implicit from current_user_memberships)
-                return True
-
-            # Optional: Allow viewing colleagues (memberships of companies they are also part of)
-            # is_member_of_obj_company = current_user_memberships.filter(company=obj.company).exists()
-            # if is_member_of_obj_company:
-            #     return True # Requires obj.company to be active
-
-            return False  # Default to deny if not their own and not an admin of that company
-
-        # For the CompanyMembership list view (obj is None):
-        # Allow access if the user is an Owner/Admin of at least one active company,
-        # as their `get_queryset` will be filtered to only show memberships they can manage/see.
-        return current_user_memberships.filter(
+        # List view: if user is Owner/Admin of at least one active company
+        return current_user_active_memberships_in_active_companies.filter(
             role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value]
         ).exists()
 
-    # Admin Actions
     @admin.action(description=_("Activate selected memberships"))
     def admin_action_make_memberships_active(self, request, queryset):
-        updated_count = 0;
+        updated_count = 0
         pks_to_update = [item.pk for item in queryset if self.has_change_permission(request, item)]
-        if pks_to_update: updated_count = CompanyMembership.objects.filter(pk__in=pks_to_update).update(
-            is_active_membership=True)
+        if pks_to_update:
+            updated_count = CompanyMembership.objects.filter(pk__in=pks_to_update).update(is_active_membership=True)
         messages.success(request, _(f"{updated_count} memberships activated."))
-        if queryset.count() != updated_count: messages.warning(request,
-                                                               _("Some memberships skipped due to permissions."))
+        if queryset.count() != updated_count:
+            messages.warning(request, _("Some memberships skipped due to permissions or company status."))
 
     @admin.action(description=_("Deactivate selected memberships"))
     def admin_action_make_memberships_inactive(self, request, queryset):
         updated_count = 0;
-        skipped_msgs = []
+        skipped_msgs = [];
         pks_to_update = []
         for m in queryset:
             can_deactivate, reason = True, ""
-            if not self.has_change_permission(request, m):
-                can_deactivate, reason = False, _("no change permission")
-            elif m.role in [CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value] and \
-                    not m.company.memberships.filter(
-                        role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
-                        is_active_membership=True).exclude(pk=m.pk).exists():
-                can_deactivate, reason = False, _("sole active Owner/Admin")
+            if not self.has_delete_permission(request, m):  # Use has_delete as it includes sole admin check
+                can_deactivate, reason = False, _("no permission or sole admin")
+
             if can_deactivate:
                 pks_to_update.append(m.pk)
             elif reason:
-                skipped_msgs.append(f"Skipped {m.user.get_name()} in {m.company.name} ({reason}).")
+                skipped_msgs.append(f"Skipped {m.user.get_full_name()} in {m.company.name} ({reason}).")
+
         if pks_to_update: updated_count = CompanyMembership.objects.filter(pk__in=pks_to_update).update(
             is_active_membership=False)
+
         if updated_count > 0: messages.success(request, _(f"{updated_count} memberships deactivated."))
         for msg in skipped_msgs: messages.warning(request, msg)
-        if not pks_to_update and not skipped_msgs: messages.info(request, _("No memberships eligible."))
+        if not pks_to_update and not skipped_msgs and queryset.exists():
+            messages.info(request, _("No memberships eligible."))
+        elif not queryset.exists():
+            messages.info(request, _("No memberships selected."))
+
+
+# =============================================================================
+# CompanyAccountingSettings Admin
+# =============================================================================
+@admin.register(CompanyAccountingSettings)
+class CompanyAccountingSettingsAdmin(admin.ModelAdmin):
+    list_display = (
+    'company_name_display', 'default_retained_earnings_account', 'default_accounts_receivable_control', 'updated_at',
+    'updated_by_user_display')
+    readonly_fields = ('created_at', 'updated_at', 'updated_by')
+    list_select_related = (
+    'company', 'updated_by', 'default_retained_earnings_account', 'default_accounts_receivable_control')
+    search_fields = ('company__name',)
+    raw_id_fields = (
+    'default_retained_earnings_account', 'default_accounts_receivable_control', 'default_sales_revenue_account',
+    'default_sales_tax_payable_account', 'default_unapplied_customer_cash_account', 'default_accounts_payable_control',
+    'default_purchase_expense_account', 'default_purchase_tax_asset_account', 'default_bank_account_for_payments_made')
+    fieldsets = (
+        (None, {'fields': ('company',)}),
+        (_("General Ledger Defaults"), {'fields': ('default_retained_earnings_account',)}),
+        (_("Accounts Receivable Defaults"),
+         {'fields': ('default_accounts_receivable_control', 'default_sales_revenue_account',
+                     'default_sales_tax_payable_account', 'default_unapplied_customer_cash_account')}),
+        (_("Accounts Payable Defaults"),
+         {'fields': ('default_accounts_payable_control', 'default_purchase_expense_account',
+                     'default_purchase_tax_asset_account')}),
+        (_("Banking Defaults"), {'fields': ('default_bank_account_for_payments_made',)}),
+        (_("Audit"), {'fields': ('created_at', 'updated_at', 'updated_by'), 'classes': ('collapse',)}),
+    )
+
+    def _get_company_effective_status(self, company_obj):
+        if company_obj is None: return False
+        if hasattr(company_obj, 'effective_is_active'): return company_obj.effective_is_active
+        if hasattr(company_obj, 'is_active') and hasattr(company_obj, 'is_suspended_by_admin'):
+            return company_obj.is_active and not company_obj.is_suspended_by_admin
+        if hasattr(company_obj, 'is_active'): return company_obj.is_active
+        return False
+
+    @admin.display(description=_("Company"), ordering='company__name')
+    def company_name_display(self, obj):  # Renamed to avoid conflict with field 'company_name' if it existed
+        return obj.company.name if obj.company else "N/A"
+
+    @admin.display(description=_("Updated By"), ordering='updated_by__name')
+    def updated_by_user_display(self, obj):  # Renamed
+        return obj.updated_by.get_full_name() if obj.updated_by else "N/A"
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        obj_id = request.resolver_match.kwargs.get('object_id')
+        company_for_filtering = None
+        if obj_id:
+            try:
+                settings_instance = self.get_object(request, obj_id)
+                if settings_instance: company_for_filtering = settings_instance.company
+            except self.model.DoesNotExist:
+                pass
+
+        if not company_for_filtering and 'company' in request.POST:  # If adding new and company is selected in form
+            company_pk = request.POST.get('company')
+            if company_pk:
+                try:
+                    company_for_filtering = Company.objects.get(pk=company_pk)
+                except (Company.DoesNotExist, ValueError):
+                    pass
+
+        if db_field.name == "company" and not request.user.is_superuser:
+            # Filter company choices for non-SU
+            admin_company_ids = CompanyMembership.objects.filter(
+                user=request.user,
+                role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
+                is_active_membership=True, company__is_active=True
+            ).values_list('company_id', flat=True)
+            kwargs["queryset"] = Company.objects.filter(pk__in=admin_company_ids,
+                                                        is_active=True)  # Only active companies they manage
+
+        if company_for_filtering and db_field.remote_field.model == Account:
+            # Filter account choices based on the selected/current company
+            kwargs["queryset"] = Account.objects.filter(company=company_for_filtering, is_active=True).select_related(
+                'account_group').order_by('account_type', 'account_name')
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+    def save_model(self, request, obj, form, change):
+        if request.user.is_authenticated: obj.updated_by = request.user
+        super().save_model(request, obj, form, change)
+
+    def get_readonly_fields(self, request, obj=None):
+        base_ro = list(self.readonly_fields)
+        if obj: base_ro.append('company')  # Company is not editable after creation
+        return tuple(base_ro)
+
+    def has_add_permission(self, request):
+        if request.user.is_superuser: return True
+        return CompanyMembership.objects.filter(
+            user=request.user, role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
+            is_active_membership=True, company__is_active=True
+        ).exists()
+
+    def has_change_permission(self, request, obj=None):  # obj is CompanyAccountingSettings
+        if request.user.is_superuser: return True
+        if obj and obj.company:
+            return CompanyMembership.objects.filter(
+                user=request.user, company=obj.company,
+                role__in=[CompanyMembership.Role.OWNER.value, CompanyMembership.Role.ADMIN.value],
+                is_active_membership=True
+            ).exists() and self._get_company_effective_status(obj.company)
+        return False
+
+    def has_view_permission(self, request, obj=None):  # obj is CompanyAccountingSettings
+        if request.user.is_superuser: return True
+        if obj and obj.company:
+            return CompanyMembership.objects.filter(  # Any active member of that company can view its settings
+                user=request.user, company=obj.company, is_active_membership=True
+            ).exists() and self._get_company_effective_status(obj.company)
+        # List view for non-SU: if they are member of any active company
+        return CompanyMembership.objects.filter(
+            user=request.user, is_active_membership=True, company__is_active=True
+        ).exists()
+
+    def has_delete_permission(self, request, obj=None):  # obj is CompanyAccountingSettings
+        # Typically, settings are changed, not deleted. If deletion is allowed, it's same as change.
+        if request.user.is_superuser: return True  # Or False, if you don't want SU to delete either easily
+        return self.has_change_permission(request, obj)
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if request.user.is_superuser: return qs
+        member_company_ids = CompanyMembership.objects.filter(
+            user=request.user, is_active_membership=True, company__is_active=True
+        ).values_list('company_id', flat=True)
+        return qs.filter(company_id__in=list(member_company_ids))

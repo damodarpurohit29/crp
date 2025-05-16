@@ -124,7 +124,7 @@ class TenantAccountingModelAdmin(admin.ModelAdmin):
 
         if not request_user_company_context:
             logger.warning(
-                f"AdminBasePerm: Non-SU '{request.user.username}' lacks request company context. Denying access to obj: {obj}.")
+                f"AdminBasePerm: Non-SU '{request.user.name}' lacks request company context. Denying access to obj: {obj}.")
             return False
 
         if obj is None: return True  # For list/add views, permission based on user's context is sufficient
@@ -139,7 +139,7 @@ class TenantAccountingModelAdmin(admin.ModelAdmin):
             obj_co_name = getattr(obj.company, 'name', f"ID {obj_company_id}") if hasattr(obj,
                                                                                           'company') and obj.company else f"ID {obj_company_id or 'Unknown'}"
             logger.warning(
-                f"AdminBasePerm Denied: User '{request.user.username}' (Context: '{request_user_company_context.name}') "
+                f"AdminBasePerm Denied: User '{request.user.name}' (Context: '{request_user_company_context.name}') "
                 f"accessing {obj._meta.verbose_name} (PK: {obj.pk}) of Company '{obj_co_name}'.")
             return False
         return True

@@ -1,26 +1,31 @@
 {% extends "admin/base_site.html" %}
-{% load static i18n %}
+{% load i18n static %} {# Removed admin_urls as it's not directly used in this specific index example #}
+
+{% block title %}{{ title }} | {% translate "CRP Admin Dashboard" %}{% endblock %}
 
 {% block extrastyle %}
     {{ block.super }}
+    {# Link to Font Awesome if not already included in your admin base or theme #}
+    {# Example: <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css"> #}
     <style>
-        /* Assuming your admin theme (like Jazzmin dark) sets these CSS variables */
-        /* If not, you might need to define them or use direct hex codes */
+        /* --- CSS Variables for Dark Theme (Adapt if your theme uses different vars) --- */
+        /* These are fallbacks if your admin theme (like Jazzmin dark) doesn't provide them globally */
         :root {
-            --crp-dashboard-bg: var(--dark-mode-bg, #2c3034); /* Dark background for the page */
-            --crp-card-bg: var(--dark-mode-card-bg, #3a3f44); /* Slightly lighter for cards */
-            --crp-card-border: var(--dark-mode-border, #4a4f54);
-            --crp-text-primary: var(--dark-mode-text, #e9ecef);
+            --crp-dashboard-bg: var(--dark-mode-bg, #26292f); /* Default dark background */
+            --crp-card-bg: var(--dark-mode-card-bg, #31353d); /* Card background */
+            --crp-card-border: var(--dark-mode-border, #454a53);
+            --crp-text-primary: var(--dark-mode-text, #dee2e6);
             --crp-text-secondary: var(--dark-mode-text-muted, #adb5bd);
-            --crp-primary-color: var(--primary, #4e73df); /* Admin's primary color */
-            --crp-icon-bg: var(--primary-bg-subtle, #40454a); /* Darker subtle bg for icon circle */
-            --crp-icon-color: var(--primary-light, #859dd6); /* Lighter icon color */
-            --crp-icon-hover-bg: var(--primary, #4e73df);
-            --crp-icon-hover-color: #fff;
+            --crp-primary-color: var(--primary, #4e73df); /* Main theme color */
+            --crp-primary-hover: var(--primary-hover, #3b5ecc);
+            --crp-icon-bg: var(--primary-bg-subtle, rgba(78, 115, 223, 0.1)); /* Subtle background for icon circle */
+            --crp-icon-color: var(--primary, #4e73df); /* Icon color matching primary */
+            --crp-icon-hover-bg: var(--primary, #4e73df); /* Icon wrapper bg on tile hover */
+            --crp-icon-hover-color: #ffffff; /* Icon color on tile hover */
         }
 
         body {
-            background-color: var(--crp-dashboard-bg) !important; /* Important to override potential defaults */
+            background-color: var(--crp-dashboard-bg) !important;
             color: var(--crp-text-primary);
         }
         .dashboard-container {
@@ -32,7 +37,7 @@
             text-align: center;
             margin-bottom: 3.5rem;
         }
-        .welcome-header .icon-brand {
+        .welcome-header .icon-brand { /* Assuming you have a brand icon like a rocket */
             font-size: 3.5rem;
             color: var(--crp-primary-color);
             margin-bottom: 0.75rem;
@@ -41,7 +46,7 @@
         .welcome-header h1 {
             font-weight: 300;
             font-size: 2.5rem;
-            color: var(--crp-text-primary); /* Use themed text color */
+            color: var(--crp-text-primary);
         }
         .welcome-header h1 span {
             font-weight: 600;
@@ -49,7 +54,7 @@
         }
         .welcome-header .lead {
             font-size: 1.15rem;
-            color: var(--crp-text-secondary); /* Use themed secondary text color */
+            color: var(--crp-text-secondary);
             max-width: 650px;
             margin-left: auto;
             margin-right: auto;
@@ -57,51 +62,50 @@
         .welcome-header hr {
             width: 100px;
             margin: 2.5rem auto;
-            border-top: 2px solid var(--crp-icon-bg); /* Use a theme color */
-            opacity: 0.75;
+            border-top: 2px solid var(--crp-card-border);
+            opacity: 0.5;
         }
 
         /* Action Tiles Styles */
         .action-tile {
             background-color: var(--crp-card-bg);
             border: 1px solid var(--crp-card-border);
-            border-radius: 12px;
-            padding: 1.5rem;
+            border-radius: 12px; /* Softer corners */
+            padding: 1.75rem 1.5rem; /* Increased padding */
             text-align: center;
-            transition: transform 0.2s ease-out, box-shadow 0.2s ease-out, border-color 0.2s ease-out, background-color 0.2s ease-out;
+            transition: transform 0.2s ease-out, box-shadow 0.2s ease-out, border-color 0.2s ease-out;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            height: 180px;
-            text-decoration: none;
-            color: var(--crp-text-secondary); /* Icon and text initial color */
-            box-shadow: 0 4px 6px rgba(0,0,0,0.15); /* Slightly stronger shadow for dark bg */
+            height: 190px; /* Slightly taller */
+            text-decoration: none !important; /* Force no underline */
+            color: var(--crp-text-secondary);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1); /* Softer shadow */
         }
-        .action-tile:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 8px 15px rgba(0,0,0,0.25);
+        .action-tile:hover, .action-tile:focus {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.15);
             border-color: var(--crp-primary-color);
-            background-color: var(--crp-card-bg-hover, #42474c); /* Slightly lighter on hover */
-            color: var(--crp-primary-color);
-            text-decoration: none;
+            color: var(--crp-primary-color); /* Text color changes on hover */
         }
         .action-tile .tile-icon-wrapper {
-            width: 70px;
-            height: 70px;
+            width: 64px; /* Consistent size */
+            height: 64px;
             border-radius: 50%;
             background-color: var(--crp-icon-bg);
             display: flex;
             align-items: center;
             justify-content: center;
             margin-bottom: 1rem;
-            transition: background-color 0.2s ease-out;
+            transition: background-color 0.2s ease-out, transform 0.2s ease-out;
         }
         .action-tile:hover .tile-icon-wrapper {
              background-color: var(--crp-icon-hover-bg);
+             transform: scale(1.1); /* Slight zoom effect */
         }
         .action-tile .tile-icon {
-            font-size: 1.8rem;
+            font-size: 1.75rem; /* Slightly smaller icon if wrapper is smaller */
             color: var(--crp-icon-color);
             transition: color 0.2s ease-out;
         }
@@ -109,107 +113,116 @@
             color: var(--crp-icon-hover-color);
         }
         .action-tile .tile-title {
-            font-size: 1rem;
+            font-size: 1.05rem; /* Slightly larger title */
             font-weight: 500;
-            margin-top: 0.25rem;
+            margin-top: 0.5rem;
             line-height: 1.3;
-            color: var(--crp-text-primary); /* Title text color */
+            color: var(--crp-text-primary);
+            transition: color 0.2s ease-out;
         }
          .action-tile:hover .tile-title {
-            color: var(--crp-primary-color); /* Title text color on hover */
+            color: var(--crp-primary-color);
         }
 
-        /* Ensure cards in a row try to maintain alignment */
+        /* Match height for cards in a row */
         .row.match-height > [class*="col-"] {
             display: flex;
             flex-direction: column;
+            margin-bottom: 1.5rem; /* Ensure consistent bottom margin */
         }
          .row.match-height > [class*="col-"] > .action-tile {
-            flex-grow: 1;
+            flex-grow: 1; /* Makes tiles in a row take same height */
         }
 
-        /* Optional: Custom column width for 5 items - needs to be added to col definitions */
-        @media (min-width: 1200px) { /* xl breakpoint for 5 columns */
-            .col-xl-crp-1-5 {
-                flex: 0 0 20%;
-                max-width: 20%;
+        /* Custom column for 5 items per row on XL screens */
+        /* Bootstrap 5 uses 'col-xl-custom' or similar, or direct flex properties */
+        /* This is a simplified way for BS4 or direct styling */
+        @media (min-width: 1200px) {
+            .col-xl-crp-1-5 { /* Custom class for 1/5th width */
+                flex: 0 0 auto; /* Don't grow or shrink, use defined width */
+                width: 19%; /* Approx 1/5th, adjust with margin/padding */
+                margin-right: 1.25%; /* Gutter */
+            }
+            .col-xl-crp-1-5:last-child {
+                margin-right: 0;
             }
         }
+        @media (max-width: 1199.98px) and (min-width: 992px) { /* Large screens, maybe 3 columns */
+            .col-lg-crp-1-5 { flex: 0 0 auto; width: 32%; margin-right: 2%; }
+            .col-lg-crp-1-5:nth-child(3n) { margin-right: 0; }
+            .col-lg-crp-1-5:nth-child(3n+1) { clear: left; }
+        }
+        /* Add more breakpoints as needed */
 
-        /* Small Logout Button */
-        .logout-button-small {
-            padding: 0.5rem 1rem;
-            font-size: 0.9rem;
-            border-radius: 0.25rem;
-            background-color: var(--danger, #dc3545);
-            border-color: var(--danger, #dc3545);
-            color: #fff;
-            transition: background-color 0.15s ease-in-out, border-color 0.15s ease-in-out;
+        .logout-button-container { margin-top: 3rem; text-align: center; }
+        .logout-button-small { /* Your existing logout button style */
+            padding: 0.6rem 1.2rem; font-size: 0.95rem; border-radius: 0.3rem;
+            background-color: var(--danger, #e74c3c); border-color: var(--danger, #e74c3c);
+            color: #fff; transition: background-color 0.15s ease-in-out, border-color 0.15s ease-in-out;
         }
-        .logout-button-small:hover {
-            background-color: var(--danger-dark, #c82333);
-            border-color: var(--danger-darker, #bd2130);
-            color: #fff;
-        }
-        .logout-button-small .fas {
-            margin-right: 0.3rem;
-        }
-
+        .logout-button-small:hover { background-color: var(--danger-dark, #c0392b); border-color: var(--danger-darker, #a93226); color: #fff; }
+        .logout-button-small .fas { margin-right: 0.4rem; }
     </style>
 {% endblock %}
 
-{% block content_title %}{% endblock %}
+{% block content_title %}{% endblock %} {# Remove default admin content title #}
 
 {% block content %}
 <div class="container-fluid mt-4 px-lg-5 px-md-4 px-3 dashboard-container">
 
     <div class="row mb-5 welcome-header">
         <div class="col-12">
-            <span class="icon-brand fas fa-rocket"></span>
+            <span class="icon-brand fas fa-cogs"></span> {# Changed to a generic settings/cogs icon #}
             <h1>
                 {% translate "Welcome to" %} <span>CRP Admin Dashboard</span>
             </h1>
             <p class="lead">
-                {% translate "Effortlessly manage your applications using the options below or the sidebar." %}
+                {% translate "Manage your Cash Resource Planning system efficiently. Select an option below or use the sidebar navigation." %}
             </p>
             <hr>
         </div>
     </div>
 
-    {# --- Action Tiles (5 items) --- #}
-    {# Using col-xl-crp-1-5 for 5 columns on extra large screens, adjust col-lg, col-md for desired wrapping #}
-    <div class="row match-height">
-        <div class="col-12 col-sm-6 col-md-4 col-lg-crp-1-5 mb-4"> {# Adjusted for 5 columns for lg and up if you add custom class #}
+    {# --- Action Tiles --- #}
+    {# Adjust column classes (e.g., col-lg-4 col-md-6) for desired responsiveness #}
+    {# If using the custom .col-xl-crp-1-5, ensure your grid supports it or use standard BS columns #}
+    <div class="row match-height justify-content-center">
+        {# Tile 1: Manage Vouchers #}
+        <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6">
              <a href="{% url 'admin:crp_accounting_voucher_changelist' %}" class="action-tile">
                  <div class="tile-icon-wrapper"><i class="fas fa-file-invoice-dollar tile-icon"></i></div>
                  <h5 class="tile-title">{% translate "Manage Vouchers" %}</h5>
              </a>
         </div>
 
-        <div class="col-12 col-sm-6 col-md-4 col-lg-crp-1-5 mb-4">
+        {# Tile 2: Manage Parties (Customers/Suppliers) #}
+        <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6">
              <a href="{% url 'admin:crp_accounting_party_changelist' %}" class="action-tile">
-                 <div class="tile-icon-wrapper"><i class="fas fa-address-book tile-icon"></i></div>
+                 <div class="tile-icon-wrapper"><i class="fas fa-users tile-icon"></i></div> {# Changed icon #}
                  <h5 class="tile-title">{% translate "Manage Parties" %}</h5>
              </a>
         </div>
 
-        <div class="col-12 col-sm-6 col-md-4 col-lg-crp-1-5 mb-4">
+        {# Tile 3: Chart of Accounts #}
+        <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6">
              <a href="{% url 'admin:crp_accounting_account_changelist' %}" class="action-tile">
-                 <div class="tile-icon-wrapper"><i class="fas fa-university tile-icon"></i></div>
+                 <div class="tile-icon-wrapper"><i class="fas fa-sitemap tile-icon"></i></div> {# Changed icon #}
                  <h5 class="tile-title">{% translate "Chart of Accounts" %}</h5>
              </a>
         </div>
 
-        {# --- THIS IS THE RESTORED PERIODS & REPORTS TILE --- #}
-        <div class="col-12 col-sm-6 col-md-4 col-lg-crp-1-5 mb-4">
-             <a href="{% url 'admin:crp_accounting_accountingperiod_changelist' %}" class="action-tile">
-                 <div class="tile-icon-wrapper"><i class="fas fa-calendar-alt tile-icon"></i></div>
-                 <h5 class="tile-title">{% translate "Periods & Reports" %}</h5>
+        {# Tile 4: Reports Hub #}
+        <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6">
+             {# Ensure 'crp_accounting_api:admin-reports-hub' is the correct namespaced URL name #}
+             {# If your admin URLs are not namespaced under 'crp_accounting_api', use 'admin:admin-reports-hub' #}
+             <a href="{% url 'crp_accounting_api:admin-reports-hub' %}" class="action-tile">
+                 <div class="tile-icon-wrapper"><i class="fas fa-chart-pie tile-icon"></i></div> {# Changed icon #}
+                 <h5 class="tile-title">{% translate "View Reports" %}</h5>
              </a>
         </div>
 
-        {# --- Tile 5: Company Profile/Settings --- #}
-        <div class="col-12 col-sm-6 col-md-4 col-lg-crp-1-5 mb-4">
+        {# Tile 5: Company Management (for SU) or Profile (for others) #}
+        <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6">
             {% if request.user.is_superuser %}
                 <a href="{% url 'admin:company_company_changelist' %}" class="action-tile">
                     <div class="tile-icon-wrapper"><i class="fas fa-building tile-icon"></i></div>
@@ -217,28 +230,26 @@
                 </a>
             {% elif request.company %}
                 <a href="{% url 'admin:company_company_change' request.company.pk %}" class="action-tile">
-                    <div class="tile-icon-wrapper"><i class="fas fa-cog tile-icon"></i></div>
-                    <h5 class="tile-title">{% translate "My Company Profile" %}</h5>
+                    <div class="tile-icon-wrapper"><i class="fas fa-user-cog tile-icon"></i></div> {# Changed icon #}
+                    <h5 class="tile-title">{% translate "My Company Settings" %}</h5>
                 </a>
             {% else %}
+                 {# Fallback for non-SU without a company context - should ideally not happen if middleware is strict #}
                  <div class="action-tile disabled" style="cursor:not-allowed; opacity:0.6;">
-                    <div class="tile-icon-wrapper"><i class="fas fa-cog tile-icon"></i></div>
-                    <h5 class="tile-title">{% translate "Company Profile" %}</h5>
+                    <div class="tile-icon-wrapper"><i class="fas fa-user-cog tile-icon"></i></div>
+                    <h5 class="tile-title">{% translate "Company Settings" %}</h5>
                 </div>
             {% endif %}
         </div>
     </div> {# End Row of Tiles #}
 
-    {# Logout Button - Placed separately and styled smaller #}
-    <div class="row mt-4">
-        <div class="col-12 text-center">
-            <form action="{% url 'admin:logout' %}" method="post" class="d-inline">
-                {% csrf_token %}
-                <button type="submit" class="btn logout-button-small">
-                    <i class="fas fa-sign-out-alt"></i> {% translate "Logout" %}
-                </button>
-            </form>
-        </div>
+    <div class="logout-button-container">
+        <form action="{% url 'admin:logout' %}" method="post" class="d-inline">
+            {% csrf_token %}
+            <button type="submit" class="btn logout-button-small">
+                <i class="fas fa-sign-out-alt"></i> {% translate "Logout" %}
+            </button>
+        </form>
     </div>
 
 </div>
@@ -246,7 +257,11 @@
 
 
 {% block footer %}
-<footer class="text-center py-4 mt-5 small" style="background-color: var(--crp-card-bg); border-top: 1px solid var(--crp-card-border); color: var(--crp-text-secondary);">
+<footer class="text-center py-4 mt-auto small"
+        style="background-color: var(--crp-card-bg, #31353d);
+               border-top: 1px solid var(--crp-card-border, #454a53);
+               color: var(--crp-text-secondary, #adb5bd);
+               position: relative; bottom: 0; width: 100%;">
     <div class="container">
        © {% now "Y" %} <strong>CRP Edge</strong> - {% translate "All rights reserved." %}
     </div>
