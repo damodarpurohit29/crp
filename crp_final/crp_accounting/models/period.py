@@ -1,11 +1,14 @@
 # crp_accounting/models/period.py
 
 import logging
+from typing import Optional
+
 from django.db import models, transaction
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 from django.utils import timezone # Import timezone
 
+from company.models import Company
 # --- Tenant Scoped Base Model Import ---
 from .base import TenantScopedModel # Assuming base.py is in the same 'models' directory
 
@@ -84,39 +87,73 @@ class FiscalYear(TenantScopedModel): # Inherit from TenantScopedModel
         return f"{self.name} ({self.company.name})"
 
     def clean(self):
-        """Custom model validation for FiscalYear within tenant context."""
-        super().clean() # Call parent's clean if TenantScopedModel has one
+        super().clean()
+        errors = {}
 
-        if self.end_date <= self.start_date:
-            raise ValidationError(_("End date must be after the start date."))
+        effective_company_for_validation: Optional[Company] = None
+        if hasattr(self, 'company') and self.company:
+            effective_company_for_validation = self.company
+        elif self.company_id:
+            try:
+                effective_company_for_validation = Company.objects.get(pk=self.company_id)
+                if not (hasattr(self, 'company') and self.company): self.company = effective_company_for_validation
+            except Company.DoesNotExist:
+                errors['company'] = _("Invalid company associated with this fiscal year.")
+                raise ValidationError(errors)  # Stop if company_id is invalid
 
-        # Validate date overlaps within the SAME company
-        overlapping_years = FiscalYear.objects.filter( # Use default manager (scoped)
-            company=self.company, # Ensure we only check within this company
-            start_date__lt=self.end_date,
-            end_date__gt=self.start_date
-        ).exclude(pk=self.pk) # Exclude self if updating
+        # Non-company specific validations first
+        if self.start_date and self.end_date and self.end_date <= self.start_date:
+            errors['end_date'] = _("End date must be after the start date.")
+        if not self.start_date: errors['start_date'] = _("Start date is required.")
+        if not self.end_date: errors['end_date'] = _("End date is required.")
 
-        if overlapping_years.exists():
-            raise ValidationError(
-                _("The dates for this fiscal year overlap with another fiscal year (%(other_year)s) in your company.") %
-                {'other_year': ", ".join([str(fy.name) for fy in overlapping_years])}
-            )
+        if not effective_company_for_validation:
+            # If it's a new object (no pk yet) AND company_id is still None,
+            # it means the admin framework hasn't set it yet.
+            # We cannot perform company-scoped validations. They must be caught by
+            # TenantAccountingModelAdmin.save_model (which sets company then calls full_clean again)
+            # or by database constraints (like unique_together including company).
+            if not self.pk and not self.company_id:
+                logger.debug(
+                    f"FiscalYear Clean (New Instance, PK:{self.pk}, CoID:{self.company_id}): Company not yet set by admin. Skipping company-scoped overlap/active checks in this model.clean() pass.")
+                if errors: raise ValidationError(errors)  # Raise any non-company errors found so far
+                return  # Skip company-scoped checks for now
+            else:  # Existing object missing company, or new object where company_id became None after form.
+                errors['company'] = _("Fiscal year must be associated with a company.")
+                if errors: raise ValidationError(errors)  # Raise all errors
+                return  # Should not happen if errors is raised
 
-        # Ensure only one active fiscal year PER COMPANY
+        # --- Company-scoped validations (effective_company_for_validation is now guaranteed to be set) ---
+        # Overlap checks
+        if self.start_date and self.end_date and not errors.get('start_date') and not errors.get(
+                'end_date'):  # Only if dates are valid
+            overlapping_years = FiscalYear.objects.filter(
+                company=effective_company_for_validation,
+                start_date__lt=self.end_date,
+                end_date__gt=self.start_date
+            ).exclude(pk=self.pk)
+            if overlapping_years.exists():
+                errors.setdefault('start_date', []).append(  # Use setdefault to append if key exists
+                    _("Dates overlap with fiscal year(s): %(names)s.") %
+                    {'names': ", ".join([fy.name for fy in overlapping_years])}
+                )
+                if 'end_date' not in errors: errors.setdefault('end_date', []).append(
+                    errors['start_date'][0] if isinstance(errors['start_date'], list) else errors['start_date'])
+
+        # Active year check
         if self.is_active:
-            # Use default manager which is CompanyManager (already scoped by 'company' field implicitly)
-            # OR be explicit if model doesn't have it set up (but it should with TenantScopedModel)
             active_years_in_company = FiscalYear.objects.filter(
-                company=self.company,
+                company=effective_company_for_validation,
                 is_active=True
             ).exclude(pk=self.pk)
-
             if active_years_in_company.exists():
-                raise ValidationError(
-                    _("Another fiscal year (%(other_name)s) is already active for this company.") %
-                    {'other_name': active_years_in_company.first().name}
+                errors.setdefault('is_active', []).append(
+                    _("Another fiscal year ('%(name)s') is already active for this company.") %
+                    {'name': active_years_in_company.first().name}
                 )
+
+        if errors:
+            raise ValidationError(errors)
 
     @transaction.atomic # Ensure atomic operation
     def activate(self):
@@ -207,44 +244,82 @@ class AccountingPeriod(TenantScopedModel): # Inherit from TenantScopedModel
         return f"{self.name} (FY: {self.fiscal_year.name}, Co: {self.company.name}) - {'Locked' if self.locked else 'Open'}"
 
     def clean(self):
-        """Custom model validation for AccountingPeriod."""
-        super().clean() # Call parent's clean
+        super().clean()
+        errors = {}
 
-        if self.end_date <= self.start_date:
-            raise ValidationError(_("Period end date must be after the start date."))
+        # --- Step 1: Determine effective_company_for_period ---
+        effective_company_for_period: Optional[Company] = None
+        if hasattr(self, 'company') and self.company:
+            effective_company_for_period = self.company
+        elif self.company_id:
+            try:
+                effective_company_for_period = Company.objects.get(pk=self.company_id)
+                if not (hasattr(self, 'company') and self.company): self.company = effective_company_for_period
+            except Company.DoesNotExist:
+                errors['company'] = _("Invalid company associated with this accounting period.")
+                raise ValidationError(errors)  # Critical error
 
-        if not self.fiscal_year_id: # fiscal_year must be set
-            raise ValidationError({'fiscal_year': _("Fiscal Year is required.")})
+        # If still no company, try to infer from fiscal_year (if fiscal_year_id is set)
+        if not effective_company_for_period and self.fiscal_year_id:
+            try:
+                fy_for_inference = FiscalYear.objects.select_related('company').get(pk=self.fiscal_year_id)
+                if fy_for_inference.company:
+                    effective_company_for_period = fy_for_inference.company
+                    if not (hasattr(self, 'company') and self.company):  # If self.company wasn't already set
+                        self.company = effective_company_for_period
+                else:
+                    errors['fiscal_year'] = _("Selected Fiscal Year is missing its company association.")
+            except FiscalYear.DoesNotExist:
+                errors['fiscal_year'] = _("Selected Fiscal Year (ID: %(id)s) not found.") % {'id': self.fiscal_year_id}
 
-        # --- Ensure Fiscal Year and Period company match (Critical for integrity) ---
-        # This check assumes fiscal_year object is loaded. If fiscal_year_id is set,
-        # the save method should ensure the FK constraint enforces company match if DB is well-designed.
-        # However, adding it here is a good safeguard if fiscal_year object is pre-fetched/set.
-        if self.fiscal_year and self.fiscal_year.company_id != self.company_id:
-            raise ValidationError(
-                _("The Accounting Period's company (%(period_co)s) must match the Fiscal Year's company (%(fy_co)s).") %
-                {'period_co': self.company_id, 'fy_co': self.fiscal_year.company_id}
-            )
+        if not effective_company_for_period:
+            if self.pk:
+                errors['company'] = _("Accounting Period is missing company association.")
+            else:
+                logger.debug("AccountingPeriod Clean (New): Company not yet set. Skipping some company-scoped checks.")
+            # Validate non-company-specific things if any
+            if errors: raise ValidationError(errors)
+            return
 
-        # Ensure period dates are within the fiscal year's dates
-        if self.start_date < self.fiscal_year.start_date or self.end_date > self.fiscal_year.end_date:
-            raise ValidationError(
-                _("Period dates (%(p_start)s - %(p_end)s) must be within the fiscal year's dates (%(fy_start)s - %(fy_end)s).") %
-                {'p_start': self.start_date, 'p_end': self.end_date, 'fy_start': self.fiscal_year.start_date, 'fy_end': self.fiscal_year.end_date}
-            )
+        # --- Step 2: Company-scoped validations using effective_company_for_period ---
+        if self.fiscal_year_id:
+            try:
+                fy_to_check = FiscalYear.objects.select_related('company').get(pk=self.fiscal_year_id)
+                if fy_to_check.company_id != effective_company_for_period.id:  # Compare IDs for safety
+                    errors['fiscal_year'] = _(
+                        "Selected Fiscal Year (Co: %(fy_co)s) must belong to the Accounting Period's company (Co: %(ap_co)s).") % \
+                                            {'fy_co': fy_to_check.company.name if fy_to_check.company else 'N/A',
+                                             'ap_co': effective_company_for_period.name}
+                # ... other fiscal_year related checks (e.g., period dates within FY dates) ...
+                if self.start_date and self.end_date and fy_to_check.start_date and fy_to_check.end_date:
+                    if not (fy_to_check.start_date <= self.start_date <= self.end_date <= fy_to_check.end_date):
+                        errors['start_date'] = _("Period dates must be within the selected Fiscal Year's range.")
+                        errors['end_date'] = errors['start_date']  # Apply to both for clarity
+            except FiscalYear.DoesNotExist:  # Should have been caught if inferring
+                if 'fiscal_year' not in errors: errors['fiscal_year'] = _(
+                    "Selected Fiscal Year not found during validation.")
+        elif not self._state.adding:  # Fiscal year is mandatory for existing periods
+            errors['fiscal_year'] = _("Fiscal Year is required for this accounting period.")
 
-        # Validate date overlaps for periods within the SAME fiscal year (and thus same company)
-        overlapping_periods = AccountingPeriod.objects.filter(
-            fiscal_year=self.fiscal_year, # Scoped to the same fiscal year (implicitly same company)
-            start_date__lt=self.end_date,
-            end_date__gt=self.start_date
-        ).exclude(pk=self.pk)
+        # ... other validations for overlapping periods within the effective_company_for_period ...
+        if self.start_date and self.end_date:
+            if self.end_date <= self.start_date:
+                errors['end_date'] = _("End date must be after start date.")
+            else:
+                overlapping_periods = AccountingPeriod.objects.filter(
+                    company=effective_company_for_period,
+                    start_date__lt=self.end_date,
+                    end_date__gt=self.start_date
+                ).exclude(pk=self.pk)
+                if overlapping_periods.exists():
+                    errors['start_date'] = _("Period dates overlap with existing period(s) in this company.")
+                    errors['end_date'] = errors['start_date']
+        else:
+            if not self.start_date: errors['start_date'] = _("Start date required.")
+            if not self.end_date: errors['end_date'] = _("End date required.")
 
-        if overlapping_periods.exists():
-            raise ValidationError(
-                 _("The dates for this accounting period overlap with another period (%(other_period)s) in the same fiscal year.") %
-                 {'other_period': ", ".join([str(p.name) for p in overlapping_periods])}
-            )
+        if errors:
+            raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
         """Ensure company of period matches company of fiscal year before saving."""

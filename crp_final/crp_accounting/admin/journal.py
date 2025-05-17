@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Optional, Any
 
 from django.contrib import admin, messages
+from django.db import models
 from django.http import HttpRequest
 from django.urls import reverse, NoReverseMatch
 from django.utils.html import format_html
@@ -611,56 +612,160 @@ class VoucherAdmin(TenantAccountingModelAdmin):
 # =============================================================================
 @admin.register(VoucherLine)
 class VoucherLineAdmin(TenantAccountingModelAdmin):
-    # Base class adds 'get_record_company_display' for SUs.
+    # Base class 'dynamic_company_display_field_name' handles company column for SUs.
+    # Do NOT add 'company' or 'voucher__company' directly to list_display here.
     list_display = (
-        'id', 'voucher_link_display', 'account_display', 'dr_cr_display', 'amount',
-        'line_narration_short', 'created_at'
+        'id',
+        'voucher_link_display',
+        'account_display',
+        'dr_cr_display',
+        'amount',
+        'line_narration_short',
+        'created_at_display'  # Use display method for consistent formatting
     )
     search_fields = (
-    'voucher__voucher_number', 'voucher__company__name', 'account__account_name', 'account__account_number',
-    'narration')
-    list_filter_non_superuser = (('voucher__status', admin.ChoicesFieldListFilter), 'account__account_type',
-                                 ('voucher__date', admin.DateFieldListFilter))
-    raw_id_fields = ('voucher', 'account')
-    list_select_related = ('voucher__company', 'account__company')
-    date_hierarchy = 'voucher__date'
-    ordering = ('-voucher__date', '-voucher__pk', 'pk')
+        'voucher__voucher_number',
+        'voucher__company__name',  # For SU to search by parent voucher's company
+        'account__account_name',
+        'account__account_number',
+        'narration'
+    )
+    list_filter_non_superuser = (
+        ('voucher__status', admin.ChoicesFieldListFilter),  # Filter by parent voucher's status
+        'account__account_type',  # Filter by the line's account type
+        ('voucher__date', admin.DateFieldListFilter)  # Filter by parent voucher's date
+    )
+    raw_id_fields = ('voucher', 'account')  # Good for performance with many vouchers/accounts
+    list_select_related = (
+        'voucher__company',  # <<< CRUCIAL: For filtering queryset by company AND for SU company display
+        'voucher',  # For voucher_link_display and other voucher fields
+        'account',  # For account_display
+        'account__company',
+    # Optional: If you ever need to display/check account's own company (should match voucher's)
+        # 'created_by', 'updated_by' # If these fields are on VoucherLine and needed for display/filter
+    )
+    date_hierarchy = 'voucher__date'  # Use parent voucher's date for navigation
+    ordering = ('-voucher__date', '-voucher__pk', 'pk')  # Order by voucher date, then voucher, then line
     list_per_page = 50
 
+    # --- Crucial: get_queryset for Tenant Scoping ---
+    def get_queryset(self, request: HttpRequest) -> models.QuerySet:
+        """
+        Filters the queryset to show:
+        - All VoucherLines for superusers (respecting any list_select_related optimizations).
+        - Only VoucherLines belonging to vouchers of the non-superuser's current company.
+        """
+        # Start with the base queryset, which already includes list_select_related.
+        # super().get_queryset(request) from ModelAdmin will give all objects.
+        # TenantAccountingModelAdmin.get_queryset() MIGHT do some initial filtering IF VoucherLine
+        # had a direct 'company' field and was configured for it, but it doesn't.
+        # So, we start fresh from the base ModelAdmin's perspective.
+        qs = super(TenantAccountingModelAdmin, self).get_queryset(request)  # Call ModelAdmin's get_queryset
+
+        if not request.user.is_superuser:
+            # Determine the company for the non-superuser using the helper from TenantAccountingModelAdmin
+            # obj=None and form_data=None because we are in a list view context, not editing/adding.
+            company_context = self._get_company_from_request_obj_or_form(request, obj=None,
+                                                                         form_data_for_add_view_post=None)
+
+            if company_context:
+                # Filter lines based on the company of their parent voucher
+                logger.debug(
+                    f"[VoucherLineAdmin QS] Non-SU '{request.user.name}' viewing lines for Company '{company_context.name}' (PK: {company_context.pk}).")
+                return qs.filter(voucher__company=company_context)
+            else:
+                # Non-superuser has no associated company, should see nothing.
+                logger.warning(
+                    f"[VoucherLineAdmin QS] Non-SU '{request.user.name}' has NO company context. Returning empty queryset for VoucherLines.")
+                return qs.none()
+
+        # Superuser sees all lines. The list_select_related for voucher__company is still useful
+        # for the dynamic company display column added by TenantAccountingModelAdmin.
+        logger.debug(f"[VoucherLineAdmin QS] Superuser '{request.user.name}' viewing all VoucherLines.")
+        return qs
+
     def get_list_filter(self, request):
+        """Adds company filters for superusers."""
         if request.user.is_superuser:
-            return (('voucher__company', admin.RelatedOnlyFieldListFilter),
-                    ('account__company', admin.RelatedOnlyFieldListFilter)) + self.list_filter_non_superuser
+            # Allow SU to filter by the parent voucher's company
+            # And optionally by the line's account's company (though they should always match voucher's company)
+            return (
+                ('voucher__company', admin.RelatedOnlyFieldListFilter),
+                # ('account__company', admin.RelatedOnlyFieldListFilter), # Usually redundant if data is consistent
+            ) + self.list_filter_non_superuser
         return self.list_filter_non_superuser
 
-    def has_add_permission(self, request):
+    # --- Permissions: Control direct manipulation of VoucherLines ---
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        """VoucherLines are typically added via the VoucherInline, not directly."""
+        return False  # Or set to `request.user.is_superuser` for SU debugging
+
+    def has_change_permission(self, request: HttpRequest, obj: Optional[VoucherLine] = None) -> bool:
+        """
+        Allow SUs to change any line. Non-SUs typically shouldn't change standalone lines,
+        as changes should happen via the parent Voucher (and its status).
+        """
+        if not super().has_change_permission(request, obj):  # Django's base permission check
+            return False
+        if request.user.is_superuser:
+            return True
+        # If you want to allow non-SUs to change lines of DRAFT vouchers (for THEIR company):
+        # if obj and obj.voucher_id:
+        #     user_company_context = self._get_company_from_request_obj_or_form(request)
+        #     if user_company_context and obj.voucher.company_id == user_company_context.id:
+        #         return obj.voucher.status == TransactionStatus.DRAFT.value
+        return False  # Default: Non-SUs cannot change standalone lines
+
+    def has_delete_permission(self, request: HttpRequest, obj: Optional[VoucherLine] = None) -> bool:
+        """Similar logic to has_change_permission."""
+        if not super().has_delete_permission(request, obj):
+            return False
+        if request.user.is_superuser:
+            return True
+        # if obj and obj.voucher_id:
+        #     user_company_context = self._get_company_from_request_obj_or_form(request)
+        #     if user_company_context and obj.voucher.company_id == user_company_context.id:
+        #         return obj.voucher.status == TransactionStatus.DRAFT.value
         return False
 
-    def has_change_permission(self, request, obj=None):
-        return request.user.is_superuser
-
-    def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser
-
+    # --- Display Methods ---
     @admin.display(description=_('Voucher'), ordering='voucher__voucher_number')
-    def voucher_link_display(self, obj: VoucherLine):
-        if obj.voucher:
+    def voucher_link_display(self, obj: VoucherLine) -> str:
+        """Displays a clickable link to the parent Voucher's admin change page."""
+        # obj.voucher should be preloaded via list_select_related
+        if obj.voucher_id and obj.voucher:
             try:
                 link = reverse("admin:crp_accounting_voucher_change", args=[obj.voucher.pk])
                 return format_html('<a href="{}" target="_blank">{}</a>', link,
-                                   obj.voucher.voucher_number or f"V#{obj.voucher.pk}")
+                                   obj.voucher.voucher_number or f"Voucher #{obj.voucher.pk}")
             except NoReverseMatch:
-                return obj.voucher.voucher_number or f"V#{obj.voucher.pk} (Link Error)"
+                logger.warning(
+                    f"NoReverseMatch for voucher change link from VoucherLine {obj.pk} (Voucher PK: {obj.voucher.pk})")
+                return obj.voucher.voucher_number or f"Voucher #{obj.voucher.pk} (Link Error)"
         return "—"
 
     @admin.display(description=_('Account'), ordering='account__account_number')
-    def account_display(self, obj: VoucherLine):
-        return str(obj.account) if obj.account else "—"
+    def account_display(self, obj: VoucherLine) -> str:
+        """Displays the account name and number. Handles if account is not set (should not happen)."""
+        # obj.account should be preloaded
+        if obj.account_id and obj.account:
+            return f"{obj.account.account_name} ({obj.account.account_number})"
+        return _("Account Missing") if obj.account_id else "—"
 
     @admin.display(description=_('Dr/Cr'), ordering='dr_cr')
-    def dr_cr_display(self, obj: VoucherLine):
-        return obj.get_dr_cr_display()
+    def dr_cr_display(self, obj: VoucherLine) -> str:
+        """Displays the human-readable Dr/Cr status."""
+        return obj.get_dr_cr_display() if obj.dr_cr else "—"
 
     @admin.display(description=_('Narration'))
-    def line_narration_short(self, obj: VoucherLine):
-        return (obj.narration[:60] + '...') if obj.narration and len(obj.narration) > 60 else obj.narration or "—"
+    def line_narration_short(self, obj: VoucherLine) -> str:
+        """Displays a truncated version of the line narration."""
+        narration = obj.narration or ""  # Ensure narration is a string
+        return (narration[:57] + '...') if len(narration) > 60 else narration or "—"
+
+    @admin.display(description=_('Line Created At'), ordering='created_at')
+    def created_at_display(self, obj: VoucherLine) -> str:
+        """Formats the created_at timestamp. Assumes VoucherLine has 'created_at'."""
+        if hasattr(obj, 'created_at') and obj.created_at:
+            return obj.created_at.strftime('%Y-%m-%d %H:%M')
+        return "—"

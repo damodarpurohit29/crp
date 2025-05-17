@@ -1,22 +1,30 @@
 # crp_accounting/admin/period.py
 
 import logging
-from io import BytesIO
-from urllib.parse import urlencode
+from io import BytesIO  # For Excel export, if kept
+from urllib.parse import urlencode  # For report links
 from decimal import Decimal
+from typing import Optional, Any, Tuple  # For type hinting
 
 from django.contrib import admin, messages
-# Import AdminDateWidget
 from django.contrib.admin.widgets import AdminDateWidget
-# Import models for formfield_overrides
-from django.db import models as django_db_models # Use an alias if 'models' is ambiguous, or just 'models'
-from django.urls import reverse
-from django.urls.exceptions import NoReverseMatch
+from django.db import models as django_db_models, models
+from django.urls import reverse, NoReverseMatch
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
-from django.http import HttpResponse
+from django.http import HttpResponse, HttpRequest
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils.http import unquote  # For object_id from URL
 
+from ..exceptions import ReportGenerationError
+# --- App-Specific Imports ---
+from ..models.period import FiscalYear, AccountingPeriod
+from ..serializers import FiscalYearStatus
+from ..services import reports_service  # If used by actions (like export_trial_balance)
+from .admin_base import TenantAccountingModelAdmin  # Your base tenant-aware admin class
+from company.models import Company  # For type hinting and direct use
+
+# --- Excel Library (Conditional Import) ---
 try:
     import openpyxl
     from openpyxl.utils import get_column_letter
@@ -27,22 +35,8 @@ except ImportError:
     OPENPYXL_AVAILABLE = False
     logging.warning("Admin Period: 'openpyxl' library not found. Excel exports will be disabled.")
 
-from ..models.period import FiscalYear, AccountingPeriod
-
-
-# Assuming FiscalYearStatus is an enum defined in your models.period or models.enums
-# from ..models.enums import FiscalYearStatus # Or wherever it's defined
-class FiscalYearStatus:  # Placeholder if not imported
-    OPEN = "Open"
-    LOCKED = "Locked"
-    CLOSED = "Closed"
-
-
-from ..services import reports_service
-from .admin_base import TenantAccountingModelAdmin
-
-logger = logging.getLogger(__name__)
-ZERO = Decimal('0.00')
+logger = logging.getLogger("crp_accounting.admin.period")  # Specific logger for this admin file
+ZERO = Decimal('0.00')  # If used in actions, else can be removed
 
 
 # =============================================================================
@@ -50,86 +44,122 @@ ZERO = Decimal('0.00')
 # =============================================================================
 @admin.register(FiscalYear)
 class FiscalYearAdmin(TenantAccountingModelAdmin):
-    list_display = (
-    'name', 'start_date', 'end_date', 'status_display', 'is_active_display', 'closed_by_user_display', 'updated_at')
+    # list_display: 'company' column is added dynamically by TenantAccountingModelAdmin for superusers
+    list_display = ('name', 'start_date', 'end_date', 'status_colored', 'is_active_display', 'closed_by_user_display',
+                    'updated_at_short')
 
     list_filter_non_superuser = ('status', 'is_active', ('start_date', admin.DateFieldListFilter))
-    list_filter_superuser = ('company', 'status', 'is_active', ('start_date', admin.DateFieldListFilter))
+    # Superuser filter will be constructed in get_list_filter
 
-    search_fields = ('name', 'company__name')
-    readonly_fields = ('status', 'closed_by', 'closed_at', 'created_at', 'updated_at')
-    list_select_related = ('company', 'closed_by')
+    search_fields = ('name', 'company__name')  # Allow superuser to search by company name
+
+    # These fields are typically results of actions or system-set, not directly editable on change.
+    readonly_fields_on_change = ('status', 'closed_by', 'closed_at')
+    # Audit fields like created_at, created_by, updated_at, updated_by are handled by TenantAccountingModelAdmin.get_readonly_fields
+
+    list_select_related = ('company', 'closed_by')  # For efficient list display
     actions = ["admin_action_activate_year", "admin_action_lock_year", "admin_action_close_year",
                "admin_action_reopen_year"]
+    ordering = ('-company__name', '-start_date',)  # For SUs: group by company, then newest FY
 
-    # --- ADD THIS SECTION ---
     formfield_overrides = {
-        django_db_models.DateField: {'widget': AdminDateWidget},
-        # If you also had DateTimeFields you want to style, you'd add:
-        # django_db_models.DateTimeField: {'widget': AdminSplitDateTime},
+        django_db_models.DateField: {'widget': AdminDateWidget},  # Use Django's nicer date picker
     }
-    # --- END ADDED SECTION ---
 
-    def get_fieldsets(self, request, obj=None):
-        base_fields = ('name', 'start_date', 'end_date')
-        company_fieldset_fields = ('company',)
-
-        main_fieldset_fields = base_fields
+    def get_list_filter(self, request: HttpRequest) -> tuple:
+        """Dynamically sets list_filter based on whether the user is a superuser."""
         if request.user.is_superuser:
-            if not obj:
-                main_fieldset_fields = company_fieldset_fields + base_fields
+            return ('company',) + self.list_filter_non_superuser  # Superuser gets 'company' filter
+        return self.list_filter_non_superuser
 
-        main_fieldset_definition = (None, {'fields': main_fieldset_fields})
+    def get_fieldsets(self, request: HttpRequest, obj: Optional[FiscalYear] = None) -> tuple:
+        """
+        Defines the layout of fields on the add/change form.
+        The 'company' field is always included in the structure; its editability and initial value
+        are controlled by TenantAccountingModelAdmin's get_readonly_fields and save_model/initial_data.
+        """
+        detail_fields = ('name', 'start_date', 'end_date')
 
-        return (
-            main_fieldset_definition,
-            (_('Status Information'), {'fields': ('status', 'is_active', 'closed_by', 'closed_at')}),
-            (_('Audit Information'), {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
-        )
+        # 'company' field is always part of the first fieldset.
+        # - For non-SU on add: readonly and pre-filled.
+        # - For SU on add: editable dropdown.
+        # - For all users on change: readonly.
+        main_fieldset_fields = ('company',) + detail_fields
 
+        if obj is None:  # Add view
+            return (
+                (_('Fiscal Year Details'), {'fields': main_fieldset_fields}),
+                # Status and audit info are not typically set on initial creation directly by user.
+            )
+        else:  # Change view
+            status_fields = ('status', 'is_active', 'closed_by', 'closed_at')
+            # Assuming 'created_by' and 'updated_by' exist on TenantScopedModel or FiscalYear
+            audit_fields = ('created_at', 'updated_at', 'created_by', 'updated_by')
+            return (
+                (_('Fiscal Year Details'), {'fields': main_fieldset_fields}),
+                (_('Status Information'), {'fields': status_fields}),
+                (_('Audit Information'), {'fields': audit_fields, 'classes': ('collapse',)}),
+            )
+
+    def get_readonly_fields(self, request: HttpRequest, obj: Optional[FiscalYear] = None) -> tuple:
+        """Determines which fields are read-only on the form."""
+        # Start with readonly fields from TenantAccountingModelAdmin (handles 'company' correctly)
+        ro_fields = set(super().get_readonly_fields(request, obj))
+        if obj:  # If it's a change view (editing an existing FiscalYear)
+            ro_fields.update(self.readonly_fields_on_change)
+        return tuple(ro_fields)
+
+    # --- Display methods for list_display ---
     @admin.display(description=_('Status'), ordering='status')
-    def status_display(self, obj: FiscalYear):
-        color = "green"
-        if obj.status == FiscalYearStatus.LOCKED:
-            color = "orange"
-        elif obj.status == FiscalYearStatus.CLOSED:
-            color = "red"
-        return format_html(f'<span style="color:{color}; font-weight:bold;">{obj.get_status_display()}</span>')
+    def status_colored(self, obj: FiscalYear):  # Renamed for clarity
+        color_map = {
+            FiscalYearStatus.OPEN: "green",
+            FiscalYearStatus.LOCKED: "orange",
+            FiscalYearStatus.CLOSED: "red",
+        }
+        # Ensure obj.get_status_display() is available (Django default for choice fields)
+        return format_html(
+            f'<span style="color:{color_map.get(obj.status, "grey")}; font-weight:bold;">{obj.get_status_display()}</span>')
 
     @admin.display(description=_('Active'), boolean=True, ordering='is_active')
     def is_active_display(self, obj: FiscalYear):
-        return obj.is_active
+        return obj.is_active  # Assumes FiscalYear has an 'is_active' boolean field
 
-    @admin.display(description=_('Closed By'), ordering='closed_by__username')
+    @admin.display(description=_('Closed By'), ordering='closed_by__name')
     def closed_by_user_display(self, obj: FiscalYear):
-        return obj.closed_by.get_username() if obj.closed_by else "N/A"
+        return obj.closed_by.name if obj.closed_by_id else "N/A"  # Access name safely
 
+    @admin.display(description=_('Last Updated'), ordering='updated_at')
+    def updated_at_short(self, obj: FiscalYear):
+        return obj.updated_at.strftime('%Y-%m-%d %H:%M') if obj.updated_at else "N/A"
+
+    # --- Admin Actions ---
+    # (Your existing admin action methods: admin_action_activate_year,
+    #  admin_action_lock_year, admin_action_close_year, admin_action_reopen_year.
+    #  Ensure they correctly call model methods which should handle their own logic,
+    #  including company context if necessary, though usually they operate on `self.company`.)
     @admin.action(description=_('Activate selected Fiscal Year (deactivates others in same company)'))
-    def admin_action_activate_year(self, request, queryset):
-        if queryset.count() != 1:
-            self.message_user(request, _("Please select exactly one Fiscal Year to activate."), messages.WARNING)
-            return
+    def admin_action_activate_year(self, request: HttpRequest, queryset: models.QuerySet):
+        if queryset.count() != 1: self.message_user(request, _("Please select exactly one Fiscal Year to activate."),
+                                                    messages.WARNING); return
         year = queryset.first()
         try:
-            year.activate()
-            self.message_user(request, _("Fiscal Year '%(name)s' for Company '%(company)s' activated successfully.") % {
-                'name': year.name, 'company': year.company.name}, messages.SUCCESS)
+            year.activate(); self.message_user(request,
+                                               _("Fiscal Year '%(name)s' for Company '%(company)s' activated successfully.") % {
+                                                   'name': year.name, 'company': year.company.name}, messages.SUCCESS)
         except DjangoValidationError as e:
             self.message_user(request, f"Error activating '{year.name}': {e.messages_joined}", messages.ERROR)
         except Exception as e:
-            logger.error(f"Admin error activating FY {year.pk} (Co: {year.company_id}): {e}", exc_info=True)
-            self.message_user(request, _("An unexpected error occurred: %(error)s") % {'error': str(e)}, messages.ERROR)
+            logger.error(f"Admin error activating FY {year.pk} (Co: {year.company_id}): {e}",
+                         exc_info=True); self.message_user(request, _("An unexpected error occurred: %(error)s") % {
+                'error': str(e)}, messages.ERROR)
 
     @admin.action(description=_('Lock selected OPEN Fiscal Years'))
-    def admin_action_lock_year(self, request, queryset):
+    def admin_action_lock_year(self, request: HttpRequest, queryset: models.QuerySet):
         updated_count = 0
-        for year in queryset.filter(status=FiscalYearStatus.OPEN):
+        for year in queryset.filter(status=FiscalYearStatus.OPEN.value):
             try:
-                if hasattr(year, 'lock_year'):
-                    year.lock_year()
-                else:
-                    year.status = FiscalYearStatus.LOCKED; year.save(update_fields=['status', 'updated_at'])
-                updated_count += 1
+                year.lock_year(); updated_count += 1
             except DjangoValidationError as e:
                 self.message_user(request, _("Could not lock Fiscal Year '%(name)s': %(error)s") % {'name': year.name,
                                                                                                     'error': e.messages_joined},
@@ -139,12 +169,11 @@ class FiscalYearAdmin(TenantAccountingModelAdmin):
                                                 messages.SUCCESS)
 
     @admin.action(description=_('Close selected LOCKED Fiscal Years'))
-    def admin_action_close_year(self, request, queryset):
+    def admin_action_close_year(self, request: HttpRequest, queryset: models.QuerySet):
         updated_count = 0
-        for year in queryset.filter(status=FiscalYearStatus.LOCKED):
+        for year in queryset.filter(status=FiscalYearStatus.LOCKED.value):
             try:
-                year.close_year(user=request.user)
-                updated_count += 1
+                year.close_year(user=request.user); updated_count += 1  # Pass user if model method expects it
             except DjangoValidationError as e:
                 self.message_user(request, _("Could not close Fiscal Year '%(name)s': %(error)s") % {'name': year.name,
                                                                                                      'error': e.messages_joined},
@@ -154,18 +183,11 @@ class FiscalYearAdmin(TenantAccountingModelAdmin):
                                                 messages.SUCCESS)
 
     @admin.action(description=_('Reopen selected Fiscal Years (LOCKED/CLOSED to OPEN) - Use Caution!'))
-    def admin_action_reopen_year(self, request, queryset):
+    def admin_action_reopen_year(self, request: HttpRequest, queryset: models.QuerySet):
         updated_count = 0
-        for year in queryset.exclude(status=FiscalYearStatus.OPEN):
+        for year in queryset.exclude(status=FiscalYearStatus.OPEN.value):
             try:
-                if hasattr(year, 'reopen_year'):
-                    year.reopen_year()
-                else:
-                    year.status = FiscalYearStatus.OPEN
-                    year.closed_by = None
-                    year.closed_at = None
-                    year.save(update_fields=['status', 'closed_by', 'closed_at', 'updated_at'])
-                updated_count += 1
+                year.reopen_year(); updated_count += 1
             except DjangoValidationError as e:
                 self.message_user(request, _("Could not reopen Fiscal Year '%(name)s': %(error)s") % {'name': year.name,
                                                                                                       'error': e.messages_joined},
@@ -180,59 +202,122 @@ class FiscalYearAdmin(TenantAccountingModelAdmin):
 @admin.register(AccountingPeriod)
 class AccountingPeriodAdmin(TenantAccountingModelAdmin):
     list_display = (
-    'name', 'fiscal_year_display', 'start_date', 'end_date', 'lock_status_display', 'view_reports_links')
-
+    'name', 'fiscal_year_display_list', 'start_date', 'end_date', 'lock_status_display', 'view_reports_links',
+    'updated_at_short')
     list_filter_non_superuser = (
     'locked', ('fiscal_year', admin.RelatedOnlyFieldListFilter), ('start_date', admin.DateFieldListFilter))
-    list_filter_superuser = (
-    'company', 'locked', ('fiscal_year', admin.RelatedOnlyFieldListFilter), ('start_date', admin.DateFieldListFilter))
+    # Superuser filter constructed in get_list_filter
 
     search_fields = ('name', 'fiscal_year__name', 'company__name')
-    readonly_fields = ('locked', 'created_at', 'updated_at')
-    list_select_related = ('company', 'fiscal_year__company')
-    autocomplete_fields = ['fiscal_year']
+    readonly_fields_on_change = ('locked',)  # Basic readonly for change view
+    list_select_related = ('company', 'fiscal_year__company')  # Crucial for performance and display methods
+    autocomplete_fields = ['company', 'fiscal_year']  # 'company' is for SU add view
     actions = ["admin_action_lock_periods", "admin_action_unlock_periods", "admin_action_export_trial_balance"]
-    ordering = ('-fiscal_year__start_date', '-start_date',)
+    ordering = ('-fiscal_year__company__name', '-fiscal_year__start_date', '-start_date',)  # Ensures logical ordering
 
-    # --- ADD THIS SECTION ---
     formfield_overrides = {
         django_db_models.DateField: {'widget': AdminDateWidget},
     }
-    # --- END ADDED SECTION ---
 
-    def get_fieldsets(self, request, obj=None):
-        base_fields = ('name', 'fiscal_year', 'start_date', 'end_date')
-        company_fieldset_fields = ('company',)
-
-        main_fieldset_fields = base_fields
+    def get_list_filter(self, request: HttpRequest) -> tuple:
+        """Dynamically sets list_filter based on user type."""
         if request.user.is_superuser:
-            if not obj:
-                main_fieldset_fields = company_fieldset_fields + base_fields
+            # SU can filter by the Period's direct company, and also by the Fiscal Year's company (should be same).
+            return (
+            'company', ('fiscal_year__company', admin.RelatedOnlyFieldListFilter)) + self.list_filter_non_superuser
+        return self.list_filter_non_superuser
 
-        main_fieldset_definition = (None, {'fields': main_fieldset_fields})
+    def get_fieldsets(self, request: HttpRequest, obj: Optional[AccountingPeriod] = None) -> tuple:
+        """Defines form layout, ensuring 'company' field is structurally present."""
+        detail_fields = ('name', 'fiscal_year', 'start_date', 'end_date')
+        main_fieldset_fields = ('company',) + detail_fields  # 'company' always included here
 
-        return (
-            main_fieldset_definition,
-            (_('Status Information'), {'fields': ('locked',)}),
-            (_('Audit Information'), {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
+        if obj is None:  # Add view
+            return (
+                (_('Period Details'), {'fields': main_fieldset_fields}),
+            )
+        else:  # Change view
+            status_fields = ('locked',)
+            audit_fields = ('created_at', 'updated_at', 'created_by', 'updated_by')
+            return (
+                (_('Period Details'), {'fields': main_fieldset_fields}),
+                (_('Status Information'), {'fields': status_fields}),
+                (_('Audit Information'), {'fields': audit_fields, 'classes': ('collapse',)}),
+            )
+
+    def get_readonly_fields(self, request: HttpRequest, obj: Optional[AccountingPeriod] = None) -> tuple:
+        """Determines read-only fields, inheriting from base and adding specifics."""
+        ro_fields = set(super().get_readonly_fields(request, obj))
+        if obj:  # Change view
+            ro_fields.update(self.readonly_fields_on_change)
+            ro_fields.add('fiscal_year')  # Fiscal year typically not changed after period creation
+        return tuple(ro_fields)
+
+    def formfield_for_foreignkey(self, db_field: models.ForeignKey, request: HttpRequest, **kwargs: Any) -> Optional[
+        models.Field]:
+        """
+        Filters ForeignKey choices, especially for 'fiscal_year'.
+        Crucially ensures 'fiscal_year' choices are filtered by the company of the
+        AccountingPeriod being added/edited AND pre-fetches fiscal_year.company.
+        """
+        # Determine the company context FOR THE AccountingPeriod OBJECT being manipulated.
+        current_period_company_context: Optional[Company] = self._get_company_from_request_obj_or_form(
+            request,
+            obj=self.get_object(request, unquote(
+                request.resolver_match.kwargs.get('object_id', ''))) if request.resolver_match.kwargs.get(
+                'object_id') else None,
+            form_data_for_add_view_post=request.POST if request.method == 'POST' and not request.resolver_match.kwargs.get(
+                'object_id') else None
         )
+        log_prefix_ffk = f"[APeriodAdmin FFKey][User:{request.user.name}][Fld:'{db_field.name}']"
+        logger.debug(
+            f"{log_prefix_ffk} Period's CoCtx: {current_period_company_context.name if current_period_company_context else 'None'}")
 
+        if db_field.name == "fiscal_year":
+            if current_period_company_context:
+                # Filter FiscalYear choices to those belonging to the current_period_company_context.
+                # Also, select_related('company') on FiscalYear is VITAL here to prevent
+                # RelatedObjectDoesNotExist when FiscalYear.__str__ (which might access fiscal_year.company.name) is called.
+                kwargs["queryset"] = FiscalYear.objects.filter(
+                    company=current_period_company_context
+                    # status=FiscalYearStatus.OPEN.value # Optionally filter for OPEN Fiscal Years only
+                ).select_related('company').order_by('-start_date')
+                logger.debug(
+                    f"{log_prefix_ffk} Filtered FiscalYear choices for Co '{current_period_company_context.name}'. Count: {kwargs['queryset'].count()}.")
+            else:
+                # No company context determined for the AccountingPeriod (e.g., SU adding, 'company' field not yet selected).
+                kwargs["queryset"] = FiscalYear.objects.none()
+                logger.warning(f"{log_prefix_ffk} No CoCtx for current Period, so FiscalYear queryset is None.")
+                if not request.resolver_match.kwargs.get('object_id') and request.user.is_superuser:
+                    messages.info(request, _("Select 'Company' (for this new Period) to populate Fiscal Year choices."))
+
+        # Let TenantAccountingModelAdmin handle other fields or general company filtering if db_field.name == 'company'
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+    # --- Display methods ---
     @admin.display(description=_('Fiscal Year'), ordering='fiscal_year__name')
-    def fiscal_year_display(self, obj: AccountingPeriod):
-        return obj.fiscal_year.name if obj.fiscal_year else "N/A"
+    def fiscal_year_display_list(self, obj: AccountingPeriod):  # Renamed to avoid conflict if form display different
+        if obj.fiscal_year_id:
+            # obj.fiscal_year is available due to list_select_related=('fiscal_year__company')
+            return str(obj.fiscal_year) if obj.fiscal_year else "N/A (FY Link Error)"
+        return "N/A"
 
     @admin.display(description=_("Status"), ordering='locked')
     def lock_status_display(self, obj: AccountingPeriod):
-        if obj.locked: return format_html('<span style="color:red; font-weight:bold;">🔒 Locked</span>')
-        return format_html('<span style="color:green; font-weight:bold;">🔓 Open</span>')
+        return format_html('<span style="color:red; font-weight:bold;">🔒 Locked</span>') if obj.locked \
+            else format_html('<span style="color:green; font-weight:bold;">🔓 Open</span>')
 
+    @admin.display(description=_('Last Updated'), ordering='updated_at')
+    def updated_at_short(self, obj: AccountingPeriod):
+        return obj.updated_at.strftime('%Y-%m-%d %H:%M') if obj.updated_at else "N/A"
+
+    # --- Admin Actions for AccountingPeriod ---
     @admin.action(description=_('Lock selected OPEN periods'))
-    def admin_action_lock_periods(self, request, queryset):
+    def admin_action_lock_periods(self, request: HttpRequest, queryset: models.QuerySet):
         updated_count = 0
         for period in queryset.filter(locked=False):
             try:
-                period.lock_period()
-                updated_count += 1
+                period.lock_period(); updated_count += 1
             except DjangoValidationError as e:
                 self.message_user(request, _("Could not lock period '%(name)s': %(error)s") % {'name': period.name,
                                                                                                'error': e.messages_joined},
@@ -241,12 +326,11 @@ class AccountingPeriodAdmin(TenantAccountingModelAdmin):
                                                 messages.SUCCESS)
 
     @admin.action(description=_('Unlock selected LOCKED periods'))
-    def admin_action_unlock_periods(self, request, queryset):
+    def admin_action_unlock_periods(self, request: HttpRequest, queryset: models.QuerySet):
         updated_count = 0
         for period in queryset.filter(locked=True):
             try:
-                period.unlock_period()
-                updated_count += 1
+                period.unlock_period(); updated_count += 1
             except DjangoValidationError as e:
                 self.message_user(request, _("Could not unlock period '%(name)s': %(error)s") % {'name': period.name,
                                                                                                  'error': e.messages_joined},
@@ -315,6 +399,7 @@ class AccountingPeriodAdmin(TenantAccountingModelAdmin):
             report_links.append(format_html('<a href="{}" target="_blank">BS</a>', bs_url))
 
         return format_html(' | '.join(report_links)) if report_links else "No Reports Configured"
+
     @admin.action(description=_('Export Trial Balance to Excel for selected period(s)'))
     def admin_action_export_trial_balance(self, request, queryset):
         if not OPENPYXL_AVAILABLE:
