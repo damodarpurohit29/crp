@@ -112,10 +112,7 @@ WSGI_APPLICATION = 'crp_final.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-# DATABASES = {
-#     'default': dj_database_url.config(
-#         default='postgresql://cash_resourse_planning_user:mocjBzGLqzTroF4Dnl9ILc2U8N8XUd99@dpg-d0hd9sjuibrs739kht90-a.singapore-postgres.render.com/cash_resourse_planning')
-# }
+
 
 DATABASES = {
     'default': {

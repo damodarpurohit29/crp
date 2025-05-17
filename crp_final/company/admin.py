@@ -195,11 +195,11 @@ class CompanyAdmin(admin.ModelAdmin):
     effective_is_active_display_form.short_description = _('Current Account Status')
 
     def created_by_user_display(self, obj: Company) -> str:
-        return obj.created_by_user.get_name() if obj.created_by_user else _("System/N/A")
+        return obj.created_by_user.get_full_name() if obj.created_by_user else _("System/N/A")
 
     created_by_user_display.short_description = _('Registered By')
 
-    # Ensure user model has name or get_name() works as expected. For ordering:
+    # Ensure user model has name or get_full_name() works as expected. For ordering:
     # created_by_user_display.admin_order_field = 'created_by_user__name' # or relevant field
 
     def internal_company_code_display(self, obj: Company) -> str:
@@ -320,8 +320,8 @@ class CompanyAdmin(admin.ModelAdmin):
     # --- SAVE MODEL WITH DETAILED LOGGING ---
     def save_model(self, request, obj: Company, form, change):
         action = "Changing" if change else "Adding"
-        # Assuming request.user.name exists; otherwise use request.user.get_name() or str(request.user)
-        log_prefix = f"CompanyAdmin SaveModel (User:{getattr(request.user, 'name', request.user.get_name())}, Action:{action}, PK:{obj.pk or 'NEW'}):"
+        # Assuming request.user.name exists; otherwise use request.user.get_full_name() or str(request.user)
+        log_prefix = f"CompanyAdmin SaveModel (User:{getattr(request.user, 'name', request.user.get_full_name())}, Action:{action}, PK:{obj.pk or 'NEW'}):"
         logger.info(f"{log_prefix} --- Initiating save ---")
 
         original_currency_on_obj_entry = obj.default_currency_code if obj.pk else "N/A (New Record before form bind)"
@@ -339,7 +339,7 @@ class CompanyAdmin(admin.ModelAdmin):
         if not change and not obj.created_by_user_id and request.user.is_superuser:
             obj.created_by_user = request.user
             logger.info(
-                f"{log_prefix} Set created_by_user to: {getattr(request.user, 'name', request.user.get_name())}")
+                f"{log_prefix} Set created_by_user to: {getattr(request.user, 'name', request.user.get_full_name())}")
 
         logger.info(
             f"{log_prefix} 3. obj.default_currency_code BEFORE super().save_model() call: '{obj.default_currency_code}'")
@@ -420,7 +420,7 @@ class CompanyMembershipAdmin(admin.ModelAdmin):
     )
 
     def user_display(self, obj: CompanyMembership):
-        return obj.user.get_full_name() or obj.user.get_name() if obj.user else _("User Deleted")
+        return obj.user.get_full_name() or obj.user.get_full_name() if obj.user else _("User Deleted")
 
     user_display.short_description = _('User')
     user_display.admin_order_field = 'user__last_name'  # or user__name if that's the primary sort field
@@ -626,7 +626,7 @@ class CompanyMembershipAdmin(admin.ModelAdmin):
             if can_deactivate:
                 pks_to_update.append(m.pk)
             elif reason:
-                skipped_msgs.append(f"Skipped {m.user.get_name()} in {m.company.name} ({reason}).")
+                skipped_msgs.append(f"Skipped {m.user.get_full_name()} in {m.company.name} ({reason}).")
 
         if pks_to_update:
             updated_count = CompanyMembership.objects.filter(pk__in=pks_to_update).update(is_active_membership=False)
@@ -680,7 +680,7 @@ class CompanyAccountingSettingsAdmin(admin.ModelAdmin):
 
     @admin.display(description=_("Updated By"), ordering='updated_by__name')  # or updated_by__name
     def updated_by_user(self, obj):
-        return obj.updated_by.get_full_name() if obj.updated_by else "N/A"  # Use get_name for flexibility
+        return obj.updated_by.get_full_name() if obj.updated_by else "N/A"  # Use get_full_name for flexibility
 
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         company_for_filtering = None
