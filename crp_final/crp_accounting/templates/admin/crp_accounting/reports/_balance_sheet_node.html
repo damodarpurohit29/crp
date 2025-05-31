@@ -1,0 +1,50 @@
+{# crp_accounting/templates/admin/crp_accounting/reports/_balance_sheet_node.html #}
+{% load i18n static l10n humanize math_filters %}
+
+{% for node in nodes %}
+    {% comment %} Determine text color based on balance {% endcomment %}
+    {%_TEXT_COLOR_TO_USE = 'black' %} {# Default color: black #}
+    {% if node.balance is not None %}
+        {% if node.balance < 0 %}
+            {%_TEXT_COLOR_TO_USE = 'red' %}    {# Negative values in red #}
+        {% elif node.balance == 0 and node.type != 'group' and not node.is_total %} {# Only color non-group/non-total zero balances differently #}
+            {%_TEXT_COLOR_TO_USE = '#777777' %} {# Zero values in a muted gray, or 'black' #}
+        {% else %} {# Positive or Group/Total Zero balances #}
+            {%_TEXT_COLOR_TO_USE = 'black' %}
+        {% endif %}
+    {% endif %}
+
+    <tr class="{% if node.type == 'group' %}group-row{% else %}account-row{% endif %}">
+        <td class="bs-name-cell" style="padding-left: {{ node.level|default:0|multiply:1.2|add:0.5 }}em; {% if node.type == 'group' or node.is_total %}font-weight: bold;{% endif %}">
+            {{ node.name }}
+            {% if node.type == 'account' and node.account_number %}
+                <small style="color: #555555;">({{ node.account_number }})</small>
+            {% endif %}
+        </td>
+        <td class="numeric" style="color: {{_TEXT_COLOR_TO_USE }};">
+            {% if node.balance is not None %}
+                {% if node.type == 'group' or node.is_total or node.balance != 0 %} {# Show balance for groups, totals, or non-zero accounts #}
+                    {% with decimal_places=company.currency_decimal_places|default:2 %}
+                        {{ node.balance|floatformat:decimal_places|intcomma }}
+                    {% endwith %}
+                {% elif node.type == 'account' and node.balance == 0 %}
+                     {# Optionally show 0.00 for zero balance accounts, or a dash, or leave blank #}
+                     {% comment %}
+                     {% with decimal_places=company.currency_decimal_places|default:2 %}
+                        {{ node.balance|floatformat:decimal_places|intcomma }}
+                     {% endwith %}
+                     {% endcomment %}
+                     -
+                {% endif %}
+                 {% if node.currency and node.currency != company.default_currency_code %}
+                    <span class="currency-tag">({{ node.currency }})</span>
+                 {% endif %}
+            {% else %}
+                {% if node.type != 'group' and not node.is_total %}-{% endif %}
+            {% endif %}
+        </td>
+    </tr>
+    {% if node.children %}
+        {% include "admin/crp_accounting/reports/_balance_sheet_node.html" with nodes=node.children company=company is_pdf=is_pdf %}
+    {% endif %}
+{% endfor %}

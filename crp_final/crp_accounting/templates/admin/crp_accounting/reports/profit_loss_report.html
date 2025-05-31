@@ -1,0 +1,265 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static l10n humanize %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <link rel="stylesheet" type="text/css" href="{% static 'admin/css/forms.css' %}">
+    <style>
+        .report-container { max-width: 900px; margin: 0 auto; }
+        .report-selector-forms { background: var(--changelist-bg); padding: 15px; border: 1px solid var(--border-color); border-radius: 4px; margin-bottom: 25px; display: flex; flex-direction: column; gap: 20px; }
+        .selector-form-section { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 15px; }
+        .selector-form-section label { font-weight: bold; margin-right: 5px; min-width: 100px; }
+        .selector-form-section select,
+        .selector-form-section input[type="date"] { padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 4px; font-size: 0.9em; flex-grow: 1; max-width: 200px; }
+        .selector-form-section .button { padding: 8px 15px; font-size: 0.9em; }
+        .company-selector-info { font-style: italic; margin-bottom: 10px; color: var(--text-color-secondary); }
+
+        .report-header-section { margin-bottom: 1.5em; padding-bottom: 15px; border-bottom: 2px solid var(--primary); text-align: center; }
+        .report-header-section .company-main-name { font-size: 1.6em; font-weight: bold; color: var(--primary); margin-bottom: 5px; }
+        .report-header-section .report-main-title { font-size: 1.3em; font-weight: 600; margin-bottom: 10px; }
+        .report-meta-info { display: flex; justify-content: space-around; font-size: 0.95em; margin-top: 10px; padding: 0 10px; border-top: 1px dashed var(--border-color-light); padding-top: 10px; }
+        .report-meta-info p { margin-bottom: 0.3em; }
+
+        .report-table-container { overflow-x: auto; }
+        #result_list { width: 100%; border-collapse: collapse; margin-top: 0; border: 1px solid var(--border-color); font-size: 0.9em; background-color: var(--body-bg); box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        #result_list td, #result_list th { padding: 6px 10px; vertical-align: top; text-align: left; border-bottom: 1px solid var(--border-color-light, #eee); line-height: 1.4; }
+        #result_list thead th { background-color: var(--header-bg); color: var(--header-color); font-weight: bold; white-space: nowrap; border-bottom: 2px solid var(--primary); padding-bottom: 8px; position: sticky; top: 0; z-index: 10; }
+        #result_list tbody tr:hover { background-color: var(--selected-row, #f5f5f5); }
+        .numeric { text-align: right !important; font-family: var(--font-family-monospace, monospace); white-space: nowrap; }
+        #result_list thead th.numeric { text-align: right; }
+        #result_list .col-particulars { width: 60%; }
+        #result_list .col-note { width: 10%; text-align: center; }
+        #result_list .col-amount { width: 30%; }
+
+        .pl-main-section-title td:first-child { font-weight: bold; font-size: 1.05em; padding-top: 1.2em; color: var(--primary-darker, #3e6d8e); }
+        .pl-main-section-title.no-details td.numeric,
+        .pl-main-section-title.has-note td.numeric { visibility: visible; font-weight: bold; }
+        .pl-main-section-title.has-inline-details.no-note td.numeric { visibility: hidden; }
+
+        .pl-account-detail td:first-child { padding-left: 30px !important; }
+        .pl-account-detail td { font-size: 0.95em; border-bottom: none !important; padding-top: 3px !important; padding-bottom: 3px !important; }
+
+        .pl-subtotal td { font-weight: bold; border-top: 1px solid var(--border-color); padding-top: 8px; padding-bottom: 8px; }
+        .pl-subtotal.gross-profit td { background-color: var(--selected-row-lighter, #eef); }
+
+        .pl-net-income td {
+            font-weight: bold; font-size: 1.1em; border-top: 2px solid var(--primary);
+            border-bottom: 3px double var(--primary); padding-top: 10px; padding-bottom: 10px;
+            color: var(--primary-dark, #2c506b);
+        }
+        .currency-tag { font-size: 0.85em; color: var(--text-muted, #6c757d); margin-left: 5px; }
+
+        .report-actions { margin-top: 1.5em; padding-top: 1em; border-top: 1px solid var(--border-color); text-align: right; }
+        .report-actions .button { margin-left: 10px; }
+        .no-results td { text-align: center; padding: 25px !important; color: var(--text-color-secondary); }
+        .info-message { padding: 10px 15px; background-color: var(--selected-row-lighter, #eef); border: 1px solid var(--info-fg, #79aec8); color: var(--info-fg-darker, #365f8e); border-radius: 4px; margin-bottom: 20px; text-align: center;}
+
+        .financial-notes-section { margin-top: 40px; padding-top: 20px; border-top: 2px solid var(--primary); }
+        .financial-notes-section h2 { font-size: 1.4em; color: var(--header-color); margin-bottom: 20px; }
+        .note-item { margin-bottom: 25px; }
+        .note-item h3 { font-size: 1.1em; font-weight: bold; margin-bottom: 10px; color: var(--text-color); }
+        .note-item table { width: 100%; max-width: 700px; margin-left: 20px; border-collapse: collapse; font-size: 0.85em; }
+        .note-item table th, .note-item table td { padding: 5px 8px; border: 1px solid var(--border-color-light); text-align: left; }
+        .note-item table th.numeric, .note-item table td.numeric { text-align: right; }
+        .note-item table thead th { background-color: var(--header-bg-lighter); font-weight: bold; }
+        .note-item table tfoot th, .note-item table tfoot td { font-weight: bold; border-top: 1px solid var(--border-color); }
+    </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+    <div class="breadcrumbs">
+        <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+        › <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+        {% if company %}
+            {% if user.is_superuser %}
+                › <a href="{% url 'admin:company_company_changelist' %}">{% translate "Companies" %}</a>
+            {% endif %}
+            › <a href="{% if user.is_superuser %}{% url 'admin:company_company_change' company.pk %}{% else %}#{% endif %}">{{ company.name }}</a>
+        {% elif show_company_selector %}
+             › {% translate "Select Company" %}
+        {% endif %}
+        › {{ title|truncatewords:4 }}
+    </div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main" class="report-container">
+    <h1>{{ title }}</h1>
+
+    <div class="report-selector-forms">
+        {% if show_company_selector and all_companies %}
+            <form method="GET" action="" class="company-selector-form selector-form-section">
+                {% if not company %}
+                    <p class="company-selector-info">{% translate "Superuser: Please select a company to proceed." %}</p>
+                {% endif %}
+                <label for="id_company_id_select_pl">{% translate "Company:" %}</label>
+                <select name="company_id" id="id_company_id_select_pl" onchange="this.form.submit()">
+                    <option value="">--- {% translate "Select Company" %} ---</option>
+                    {% for comp_item in all_companies %}
+                        <option value="{{ comp_item.pk }}" {% if company.pk == comp_item.pk or request.GET.company_id == comp_item.pk %}selected{% endif %}>
+                            {{ comp_item.name }}
+                        </option>
+                    {% endfor %}
+                </select>
+                {% if start_date_param %}
+                    <input type="hidden" name="start_date" value="{{ start_date_param }}">
+                {% endif %}
+                {% if end_date_param %}
+                    <input type="hidden" name="end_date" value="{{ end_date_param }}">
+                {% endif %}
+                <noscript><button type="submit" class="button">{% translate "Set Company" %}</button></noscript>
+            </form>
+        {% endif %}
+
+        {% if company or not show_company_selector %}
+            <form method="GET" action="" class="date-selector-form selector-form-section">
+                {% if company %}<input type="hidden" name="company_id" value="{{ company.id }}">{% endif %}
+                <label for="id_start_date_pl">{% translate "From:" %}</label>
+                <input type="date" name="start_date" id="id_start_date_pl" value="{{ start_date_param }}" required>
+                <label for="id_end_date_pl">{% translate "To:" %}</label>
+                <input type="date" name="end_date" id="id_end_date_pl" value="{{ end_date_param }}" required>
+                <button type="submit" class="button">{% translate "View Report" %}</button>
+            </form>
+        {% endif %}
+    </div>
+
+    {# --- Report Display Logic --- #}
+    {% if report_error %}
+        <p class="errornote">{{ report_error }}</p>
+    {% elif not company and show_company_selector %}
+        <p class="info-message">{% translate "Please select a company to view reports." %}</p>
+    {% elif company %}
+        {% if not start_date_to_display or not end_date_to_display %}
+            <p class="info-message">{% translate "Please select a 'From' and 'To' date to view the Profit & Loss Statement." %}</p>
+        {% elif report_data_available %}
+            <div class="report-header-section">
+                <div class="company-main-name">{{ company.name }}</div>
+                <div class="report-main-title">{% translate "Profit and Loss Statement" %}</div>
+                <div class="report-meta-info">
+                    <p><strong>{% translate "For the Period" %}:</strong> {{ start_date_to_display|date:"DATE_FORMAT" }} {% translate "to" %} {{ end_date_to_display|date:"DATE_FORMAT" }}</p>
+                    <p><strong>{% translate "Currency" %}:</strong> {{ report_currency|default_if_none:company.default_currency_code|default:"N/A" }}
+                       {% if company.default_currency_symbol %}({{ company.default_currency_symbol }}){% endif %}
+                    </p>
+                </div>
+            </div>
+
+            <div class="report-table-container module">
+                <table id="result_list">
+                    <colgroup>
+                       <col class="col-particulars">
+                       <col class="col-note">
+                       <col class="col-amount">
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            <th scope="col">{% translate "Particulars" %}</th>
+                            <th scope="col" style="text-align:center;">{% translate "Note" %}</th>
+                            <th scope="col" class="numeric">{% translate "Amount" %} {% if company.default_currency_symbol %}({{ company.default_currency_symbol }}){% endif %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in report_lines %}
+                            <tr class="{% if line.is_main_section_title %}pl-main-section-title{% if line.accounts and not line.has_note %} has-inline-details no-note{% elif line.has_note %} has-note{% else %} no-details{% endif %}{% endif %}{% if line.is_subtotal %} pl-subtotal{% if line.section_key == 'GROSS_PROFIT' %} gross-profit{% endif %}{% endif %}{% if line.section_key == 'NET_INCOME' %} pl-net-income{% endif %} {% cycle 'row-odd' 'row-even' as pl_row_cycle_main %}">
+                                <td style="padding-left: {{ line.level|default:0|add:1 }}0px;">
+                                    {{ line.title }}
+                                </td>
+                                <td style="text-align:center;">
+                                    {% if line.has_note and line.note_ref %}
+                                        {{ line.note_ref }} {# Display the note_ref as is #}
+                                    {% endif %}
+                                </td>
+                                <td class="numeric">
+                                    {% if line.is_subtotal or line.section_key == 'NET_INCOME' %}
+                                        {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                            {{ line.amount|floatformat:decimal_places|intcomma }}
+                                        {% endwith %}
+                                    {% elif line.is_main_section_title %}
+                                        {% if line.has_note or not line.accounts %}
+                                            {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                                {{ line.amount|floatformat:decimal_places|intcomma }}
+                                            {% endwith %}
+                                        {% endif %}
+                                    {% endif %}
+                                </td>
+                            </tr>
+
+                            {% if not line.is_subtotal and line.accounts and not line.has_note %}
+                                {% for acc_detail in line.accounts %}
+                                    <tr class="pl-account-detail {% cycle 'row-odd' 'row-even' as pl_row_cycle_detail %}">
+                                        <td style="padding-left: {{ line.level|default:0|add:2 }}5px;">
+                                            {{ acc_detail.account_number }} - {{ acc_detail.account_name }}
+                                            {% if acc_detail.currency and acc_detail.currency != company.default_currency_code %}
+                                                <span class="currency-tag">({{ acc_detail.currency }})</span>
+                                            {% endif %}
+                                        </td>
+                                        <td></td> {# Empty cell for Note column in detail rows #}
+                                        <td class="numeric">
+                                            {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                                {{ acc_detail.amount|floatformat:decimal_places|intcomma }}
+                                            {% endwith %}
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            {% endif %}
+                        {% empty %}
+                            <tr><td colspan="3" class="no-results">{% translate "No profit and loss data found for the selected criteria." %}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if financial_notes_data %}
+                <div class="financial-notes-section module">
+                    <h2>{% translate "Notes to the Profit and Loss Statement" %}</h2>
+                    {% for note_key, note_content in financial_notes_data.items %}
+                        <div class="note-item">
+                            <h3>{{ note_content.title }}</h3> {# MODIFIED_LINE: Removed note_key from here #}
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>{% translate "Account Detail" %}</th>
+                                        <th class="numeric">{% translate "Amount" %} {% if company.default_currency_symbol %}({{ company.default_currency_symbol }}){% endif %}</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for detail in note_content.details %}
+                                    <tr>
+                                        <td>{{ detail.account_number }} - {{ detail.account_name }}</td>
+                                        <td class="numeric">
+                                            {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                            {{ detail.amount|floatformat:decimal_places|intcomma }}
+                                            {% endwith %}
+                                        </td>
+                                    </tr>
+                                    {% empty %}
+                                    <tr><td colspan="2">{% translate "No details for this note." %}</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                                <tfoot>
+                                    <tr>
+                                        <th style="text-align: right;">{% translate "Total for" %} {{ note_content.title }}</th>
+                                        <th class="numeric">
+                                            {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                            <strong>{{ note_content.total_amount|floatformat:decimal_places|intcomma }}</strong>
+                                            {% endwith %}
+                                        </th>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            <div class="report-actions">
+                <a href="{% url 'crp_accounting_api:admin-download-profit-loss-excel' %}?company_id={{ company.id }}&start_date={{ start_date_param }}&end_date={{ end_date_param }}" class="button">{% translate "Download Excel" %}</a>
+                <a href="{% url 'crp_accounting_api:admin-download-profit-loss-pdf' %}?company_id={{ company.id }}&start_date={{ start_date_param }}&end_date={{ end_date_param }}" class="button">{% translate "Download PDF" %}</a>
+            </div>
+        {% else %}
+            <p class="info-message">{% translate "Report data could not be generated. Please check your selections or try again." %}</p>
+        {% endif %}
+    {% else %}
+         <p class="info-message">{% translate "Please select the company and date range to view the report." %}</p>
+    {% endif %}
+</div>
+{% endblock %}

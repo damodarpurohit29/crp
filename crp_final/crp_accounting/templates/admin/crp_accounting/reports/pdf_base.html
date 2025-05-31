@@ -1,0 +1,143 @@
+{# crp_accounting/templates/admin/crp_accounting/reports/pdf_base.html #}
+{% load i18n %}
+<!DOCTYPE html>
+<html lang="{{ LANGUAGE_CODE|default:"en-us" }}">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}{{ report_title|default:"Report" }}{% endblock %}</title>
+    <style type="text/css">
+        @page {
+            size: A4 portrait;
+            margin: 1.5cm 1cm 2cm 1cm; /* top, right, bottom, left */
+
+            @frame header_frame {
+                -pdf-frame-content: page-header-content;
+                top: 0.5cm;
+                left: 1cm;
+                right: 1cm;
+                height: 1.5cm;
+            }
+            @frame footer_frame {
+                -pdf-frame-content: page-footer-content;
+                bottom: 0.5cm; /* Position from bottom */
+                left: 1cm;
+                right: 1cm;
+                height: 1cm;
+            }
+            /* Content frame will take the rest of the space between header and footer automatically */
+        }
+
+        body {
+            font-family: "Helvetica", "Arial", sans-serif;
+            font-size: 9pt; /* Slightly smaller for more content */
+            color: #222222;
+            line-height: 1.4;
+        }
+        h1, h2, h3 {
+            font-family: "Helvetica", "Arial", sans-serif;
+            color: #000000;
+            margin-bottom: 0.7em;
+            margin-top: 0;
+            font-weight: bold;
+        }
+        h1 { font-size: 16pt; }
+        h2 { font-size: 14pt; }
+        h3 { font-size: 12pt; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1.2em;
+            font-size: 9pt;
+        }
+        th, td {
+            border: 1px solid #c5c5c5; /* Lighter border */
+            padding: 5px 7px; /* Adjust padding */
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background-color: #e8e8e8; /* Lighter header */
+            font-weight: bold;
+            color: #000000;
+        }
+        .numeric {
+            text-align: right;
+        }
+        .text-center {
+            text-align: center;
+        }
+        .company-main-name { font-size: 1.5em; font-weight: bold; color: #000; margin-bottom: 3px; text-align: center; }
+        .report-main-title { font-size: 1.2em; font-weight: bold; margin-bottom: 8px; text-align: center; }
+        .report-meta-info { font-size: 0.85em; margin-bottom: 1em; border-bottom: 1px solid #bbb; padding-bottom: 0.5em;}
+        .report-meta-info p { margin: 0 0 0.15em 0; text-align: center;}
+        .status-balanced { color: #008000; font-weight: bold; } /* Darker green */
+        .status-unbalanced { color: #CC0000; font-weight: bold; } /* Darker red */
+
+        .bs-section-header { /* This is for the "Assets", "Liabilities", "Equity" titles */
+            font-size: 1.1em;
+            font-weight: bold;
+            padding: 6px 0px;
+            border-bottom: 1.5px solid #333;
+            margin-bottom: 0.5em;
+            margin-top: 0.8em;
+        }
+         .bs-section-footer th, .bs-section-footer td {
+            font-weight: bold;
+            border-top: 1.5px solid #333;
+            background-color: #f0f0f0; /* Light background for totals */
+        }
+        .total-liab-equity-footer { /* Specific class for the final total */
+             border-top: 2px solid #000000 !important;
+             background-color: #e0e0e0 !important;
+        }
+        .total-liab-equity-footer th, .total-liab-equity-footer td {
+             font-size: 1.05em;
+        }
+
+        td.bs-name-cell { white-space: normal; }
+        .currency-tag { font-size: 0.8em; color: #555555; margin-left: 4px; font-weight: normal; }
+
+        #page-header-content {
+            text-align: center;
+            font-size: 8pt;
+            color: #444444;
+        }
+        #page-footer-content {
+            text-align: right;
+            font-size: 8pt;
+            color: #555555;
+        }
+        #page-footer-content .page-number:before {
+            content: "Page " counter(page);
+        }
+        .report-error-message {
+            color: #CC0000;
+            font-weight: bold;
+            text-align: center;
+            padding: 20px;
+            border: 1px solid #CC0000;
+            background-color: #ffeeee;
+        }
+    </style>
+    {% block report_specific_styles %}{% endblock %}
+</head>
+<body>
+    <div id="page-header-content">
+        {% block page_header %}
+            {% if company %}<strong>{{ company.name }}</strong>{% endif %}
+            {% if report_title_for_header %} - {{ report_title_for_header }}{% endif %}
+            {% if as_of_date_to_display %} (As of {{ as_of_date_to_display|date:"M. d, Y" }}){% endif %}
+        {% endblock %}
+    </div>
+
+    <div id="page-footer-content">
+        <span class="page-number"></span>
+    </div>
+
+    {# The main content will flow into the default page area between header and footer #}
+    {% block report_content %}
+        <p class="report-error-message">Report content is missing or could not be generated.</p>
+    {% endblock %}
+</body>
+</html>
