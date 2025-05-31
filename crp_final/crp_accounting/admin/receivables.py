@@ -95,7 +95,7 @@ class InvoiceLineInline(admin.TabularInline):
         Prioritizes parent invoice's company, then company from main form POST (for new invoices),
         then request.company.
         """
-        log_prefix = f"[IL_Inline_GetCo][User:{request.user.username if request.user.is_authenticated else 'Anonymous'}]"
+        log_prefix = f"[IL_Inline_GetCo][User:{request.user.name if request.user.is_authenticated else 'Anonymous'}]"
 
         if parent_invoice and parent_invoice.pk and parent_invoice.company_id:
             if hasattr(parent_invoice, 'company') and parent_invoice.company:
@@ -134,13 +134,13 @@ class InvoiceLineInline(admin.TabularInline):
         """Stores the parent CustomerInvoice object on the request for use in formfield_for_foreignkey."""
         request._current_parent_invoice_for_line_inline = obj
         logger.debug(
-            f"[IL_Inline GetFormset][User:{request.user.username if request.user.is_authenticated else 'Anonymous'}] Stored parent invoice (PK: {obj.pk if obj else 'None'}) on request.")
+            f"[IL_Inline GetFormset][User:{request.user.name if request.user.is_authenticated else 'Anonymous'}] Stored parent invoice (PK: {obj.pk if obj else 'None'}) on request.")
         return super().get_formset(request, obj, **kwargs)
 
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         parent_invoice = self._get_parent_invoice_context(request)
         company_for_filtering = self._get_company_for_inline_filtering(request, parent_invoice)
-        log_prefix = f"[IL_Inline FFKey][User:{request.user.username if request.user.is_authenticated else 'Anonymous'}][Fld:'{db_field.name}']"
+        log_prefix = f"[IL_Inline FFKey][User:{request.user.name if request.user.is_authenticated else 'Anonymous'}][Fld:'{db_field.name}']"
 
         if db_field.name == "revenue_account":
             if company_for_filtering:
@@ -273,7 +273,7 @@ class CustomerInvoiceAdmin(TenantAccountingModelAdmin):
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
     def save_model(self, request, obj: CustomerInvoice, form, change):
-        log_prefix = f"[CIAdmin SaveModel][User:{request.user.username if request.user.is_authenticated else 'Anonymous'}][Inv:{obj.pk or 'New'}]"
+        log_prefix = f"[CIAdmin SaveModel][User:{request.user.name if request.user.is_authenticated else 'Anonymous'}][Inv:{obj.pk or 'New'}]"
         is_new = not obj.pk
         original_status = form.initial.get('status') if change else None
 
@@ -541,7 +541,7 @@ class CustomerInvoiceAdmin(TenantAccountingModelAdmin):
     @admin.action(description=_('VOID selected invoices'))
     def admin_action_void_invoices(self, request: HttpRequest, queryset: models.QuerySet):
         void_reason_default = _("Voided via admin bulk action by %(user)s on %(date)s.") % {
-            'user': request.user.username if request.user.is_authenticated else 'System',
+            'user': request.user.name if request.user.is_authenticated else 'System',
             'date': timezone.now().strftime('%Y-%m-%d')
         }
         self._call_receivables_service_action_single(request, queryset,
@@ -585,7 +585,7 @@ class PaymentAllocationInline(admin.TabularInline):
 
     def _get_company_customer_for_alloc_filter(self, request: HttpRequest, parent_payment: Optional[CustomerPayment]) -> \
             Tuple[Optional[Company], Optional[Party]]:
-        log_prefix = f"[PA_Inline_GetCoCust][User:{request.user.username if request.user.is_authenticated else 'Anonymous'}]"
+        log_prefix = f"[PA_Inline_GetCoCust][User:{request.user.name if request.user.is_authenticated else 'Anonymous'}]"
         company_instance: Optional[Company] = None
         customer_instance: Optional[Party] = None
 
@@ -760,7 +760,7 @@ class CustomerPaymentAdmin(TenantAccountingModelAdmin):
 
         try:
             super().save_model(request, obj, form, change) # This will call full_clean
-            logger.info(f"[CPAdmin SaveModel][User:{request.user.username if request.user.is_authenticated else 'Anonymous'}] Payment header saved (PK: {obj.pk}). Status: {obj.status}")
+            logger.info(f"[CPAdmin SaveModel][User:{request.user.name if request.user.is_authenticated else 'Anonymous'}] Payment header saved (PK: {obj.pk}). Status: {obj.status}")
         except DjangoValidationError as e:
             form._update_errors(e)
             logger.warning(f"Validation error saving payment {obj.pk or 'New'}: {e.message_dict if hasattr(e, 'message_dict') else e}")
@@ -862,7 +862,7 @@ class CustomerPaymentAdmin(TenantAccountingModelAdmin):
     def admin_action_void_payments(self, request: HttpRequest, queryset: models.QuerySet):
         if hasattr(receivables_service, 'void_customer_payment'):
             void_reason_default = _("Voided via admin bulk action by %(user)s on %(date)s.") % {
-                'user': request.user.username if request.user.is_authenticated else 'System',
+                'user': request.user.name if request.user.is_authenticated else 'System',
                 'date': timezone.now().strftime('%Y-%m-%d')
             }
             self._call_service_action_single_item(request, queryset,
