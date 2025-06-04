@@ -1,0 +1,231 @@
+{# crp_accounting/templates/admin/crp_accounting/reports/balance_sheet_report.html #}
+{% extends "admin/base_site.html" %}
+{% load i18n static l10n humanize %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <link rel="stylesheet" type="text/css" href="{% static 'admin/css/forms.css' %}">
+    <style>
+        .report-container { max-width: 1100px; margin: 0 auto; }
+        .report-selector-forms { background: var(--changelist-bg); padding: 15px; border: 1px solid var(--border-color); border-radius: 4px; margin-bottom: 25px; display: flex; flex-direction: column; gap: 20px; }
+        .selector-form-section { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 15px; }
+        .selector-form-section label { font-weight: bold; margin-right: 5px; min-width: 100px; }
+        .selector-form-section select,
+        .selector-form-section input[type="date"] { padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 4px; font-size: 0.9em; flex-grow: 1; max-width: 300px; }
+        .selector-form-section .button { padding: 8px 15px; font-size: 0.9em; }
+        .company-selector-info { font-style: italic; margin-bottom: 10px; color: var(--text-color-secondary); }
+        .report-header-section { margin-bottom: 1.5em; padding-bottom: 15px; border-bottom: 2px solid var(--primary); text-align: center; }
+        .report-header-section .company-main-name { font-size: 1.6em; font-weight: bold; color: var(--primary); margin-bottom: 5px; }
+        .report-header-section .report-main-title { font-size: 1.3em; font-weight: 600; margin-bottom: 10px; }
+        .report-meta-info { display: flex; justify-content: space-around; font-size: 0.95em; margin-top: 10px; padding: 0 10px; border-top: 1px dashed var(--border-color-light); padding-top: 10px; }
+        .report-meta-info p { margin-bottom: 0.3em; }
+        .status-balanced { color: var(--success-fg, green); font-weight: bold; }
+        .status-unbalanced { color: var(--error-fg, red); font-weight: bold; }
+        .bs-columns-container { display: flex; flex-wrap: wrap; gap: 20px; }
+        .bs-column { flex: 1; min-width: 300px; margin-bottom: 20px; }
+        @media (max-width: 767px) { .bs-column { flex-basis: 100%; } }
+        .bs-section { border: 1px solid var(--border-color); border-radius: 4px; background-color: var(--body-bg); margin-bottom: 20px; }
+        .bs-section-header { background-color: var(--header-bg-lighter, #f8f9fa); padding: 10px 15px; font-size: 1.1em; font-weight: bold; color: var(--header-color); border-bottom: 1px solid var(--border-color); border-radius: 4px 4px 0 0; }
+        .bs-section-content table { width: 100%; border-collapse: collapse; }
+        .bs-section-content td, .bs-section-content th { padding: 6px 10px; vertical-align: top; text-align: left; border-bottom: 1px solid var(--border-color-light, #eee); line-height: 1.4; font-size: 0.9em; }
+        .bs-section-content tr:last-child td { border-bottom: none; }
+        .bs-section-content tbody tr:hover { background-color: var(--selected-row, #f5f5f5); }
+        .numeric { text-align: right !important; font-family: var(--font-family-monospace, monospace); white-space: nowrap; }
+        td.bs-name-cell { white-space: normal; }
+        .group-row td.bs-name-cell { font-weight: bold; }
+        .currency-tag { font-size: 0.85em; color: var(--text-muted, #6c757d); margin-left: 4px; font-weight: normal; }
+        .bs-section-footer { border-top: 1px solid var(--border-color); padding: 8px 10px; background-color: var(--header-bg-lighter, #f8f9fa); }
+        .bs-section-footer table { width: 100%; }
+        .bs-section-footer td, .bs-section-footer th { border: none; font-weight: bold; font-size: 0.95em; }
+        .bs-total-label { text-align: right; padding-right: 10px; }
+        .report-actions-footer { margin-top: 1.5em; padding-top: 1em; border-top: 1px solid var(--border-color); text-align: right; }
+        .report-actions-footer .button { margin-left: 10px; }
+        .no-results { text-align: center; padding: 25px; color: var(--text-color-secondary); }
+        .info-message { padding: 10px 15px; background-color: var(--selected-row-lighter, #eef); border: 1px solid var(--info-fg, #79aec8); color: var(--info-fg-darker, #365f8e); border-radius: 4px; margin-bottom: 20px; text-align: center;}
+    </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+    <div class="breadcrumbs">
+        <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+        â€º <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+        {% if company %}
+            {% if user.is_superuser %}
+                â€º <a href="{% url 'admin:company_company_changelist' %}">{% translate "Companies" %}</a>
+            {% endif %}
+            â€º <a href="{% if user.is_superuser %}{% url 'admin:company_company_change' company.pk %}{% else %}#{% endif %}">{{ company.name }}</a>
+        {% elif show_company_selector %}
+             â€º {% translate "Select Company" %}
+        {% endif %}
+        â€º {{ title|truncatewords:4 }}
+    </div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main" class="report-container">
+    <h1>{{ title }}</h1>
+
+    <div class="report-selector-forms">
+        {% if show_company_selector and all_companies %}
+            <form method="GET" action="" class="company-selector-form selector-form-section">
+                {% if not company %}<p class="company-selector-info">{% translate "Superuser: Please select a company to proceed." %}</p>{% endif %}
+                <label for="id_company_id_select_bs">{% translate "Company:" %}</label>
+                <select name="company_id" id="id_company_id_select_bs" onchange="this.form.submit()">
+                    <option value="">--- {% translate "Select Company" %} ---</option>
+                    {% for comp_item in all_companies %}
+                        <option value="{{ comp_item.pk }}" {% if company.pk == comp_item.pk or request.GET.company_id == comp_item.pk %}selected{% endif %}>
+                            {{ comp_item.name }}
+                        </option>
+                    {% endfor %}
+                </select>
+                {# Hidden date field to persist date selection when company changes #}
+                {% if as_of_date_param %}<input type="hidden" name="as_of_date" value="{{ as_of_date_param }}">{% endif %}
+                <noscript><button type="submit" class="button">{% translate "Set Company" %}</button></noscript>
+            </form>
+        {% endif %}
+
+        {% if company or not show_company_selector %}
+            <form method="GET" action="" class="date-selector-form selector-form-section">
+                {% if company %}<input type="hidden" name="company_id" value="{{ company.id }}">{% endif %}
+                <label for="id_as_of_date_bs">{% translate "As of Date:" %}</label>
+                <input type="date" name="as_of_date" id="id_as_of_date_bs" value="{{ as_of_date_param }}" required> {# Use string param #}
+                <button type="submit" class="button">{% translate "View Report" %}</button>
+            </form>
+        {% endif %}
+    </div>
+
+    {# --- Report Display Logic --- #}
+    {% if report_error %}
+        <p class="errornote">{{ report_error }}</p>
+    {% elif not company and show_company_selector %}
+        <p class="info-message">{% translate "Please select a company to view the Balance Sheet." %}</p>
+    {% elif company %} {# Company is selected, now check dates and report_data_available #}
+        {% if not as_of_date_to_display %} {# Company selected, but no valid date processed yet #}
+            <p class="info-message">{% translate "Please select an 'As of Date' to view the Balance Sheet." %}</p>
+        {% elif report_data_available %} {# All good: company, valid date, and data is available #}
+            <div class="report-header-section">
+                <div class="company-main-name">{{ company.name }}</div>
+                <div class="report-main-title">{% translate "Balance Sheet" %}</div>
+                <div class="report-meta-info">
+                    <p><strong>{% translate "As of Date" %}:</strong> {{ as_of_date_to_display|date:"DATE_FORMAT"|default:"N/A" }}</p>
+                    <p><strong>{% translate "Currency" %}:</strong> {{ report_currency|default_if_none:company.default_currency_code|default:"N/A" }}
+                       {% if company.default_currency_symbol %}({{ company.default_currency_symbol }}){% endif %}
+                    </p>
+                    <p><strong>{% translate "Status" %}:</strong>
+                        {% if is_balanced %}
+                            <span class="status-balanced">{% translate "Balanced" %}</span>
+                        {% else %}
+                            <span class="status-unbalanced">{% translate "OUT OF BALANCE" %}</span>
+                            {% if balance_difference is not None %}
+                                {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                <span class="text-muted"> ({% translate "Diff:" %} {{ balance_difference|floatformat:decimal_places|intcomma }})</span>
+                                {% endwith %}
+                            {% endif %}
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+
+            <div class="bs-columns-container">
+                {# --- ASSETS COLUMN --- #}
+                <div class="bs-column">
+                    <div class="bs-section">
+                        <div class="bs-section-header">{% translate "Assets" %}</div>
+                        <div class="bs-section-content">
+                            <table>
+                                <tbody>
+                                    {% include "admin/crp_accounting/reports/_balance_sheet_node.html" with nodes=assets.hierarchy company=company %}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="bs-section-footer">
+                            <table>
+                                <tr>
+                                    <th class="bs-total-label">{% translate "Total Assets" %}</th>
+                                    <td class="numeric">
+                                        {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                            {{ assets.total|floatformat:decimal_places|intcomma }}
+                                        {% endwith %}
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                {# --- LIABILITIES & EQUITY COLUMN --- #}
+                <div class="bs-column">
+                    <div class="bs-section">
+                        <div class="bs-section-header">{% translate "Liabilities" %}</div>
+                        <div class="bs-section-content">
+                            <table>
+                                <tbody>
+                                    {% include "admin/crp_accounting/reports/_balance_sheet_node.html" with nodes=liabilities.hierarchy company=company %}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="bs-section-footer">
+                            <table>
+                                <tr>
+                                    <th class="bs-total-label">{% translate "Total Liabilities" %}</th>
+                                    <td class="numeric">
+                                        {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                            {{ liabilities.total|floatformat:decimal_places|intcomma }}
+                                        {% endwith %}
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="bs-section">
+                        <div class="bs-section-header">{% translate "Equity" %}</div>
+                        <div class="bs-section-content">
+                            <table>
+                                <tbody>
+                                    {% include "admin/crp_accounting/reports/_balance_sheet_node.html" with nodes=equity.hierarchy company=company %}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="bs-section-footer">
+                            <table>
+                                <tr>
+                                    <th class="bs-total-label">{% translate "Total Equity" %}</th>
+                                    <td class="numeric">
+                                        {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                            {{ equity.total|floatformat:decimal_places|intcomma }}
+                                        {% endwith %}
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="bs-section-footer" style="border-top: 2px solid var(--primary); margin-top: -1px; background-color: var(--body-bg);">
+                          <table>
+                            <tr>
+                                <th class="bs-total-label" style="font-size:1.05em;">{% translate "Total Liabilities and Equity" %}</th>
+                                <td class="numeric" style="font-size:1.05em;">
+                                    {% with liab_plus_equity=liabilities.total|add:equity.total decimal_places=company.currency_decimal_places|default:2 %}
+                                        {{ liab_plus_equity|floatformat:decimal_places|intcomma }}
+                                    {% endwith %}
+                                </td>
+                            </tr>
+                        </table>
+                     </div>
+                </div>
+            </div>
+
+            <div class="report-actions-footer">
+                 {# Pass string param for download links #}
+                <a href="{% url 'crp_accounting_api:admin-download-balance-sheet-excel' %}?company_id={{ company.id }}&as_of_date={{ as_of_date_param }}" class="button">{% translate "Download Excel" %}</a>
+                <a href="{% url 'crp_accounting_api:admin-download-balance-sheet-pdf' %}?company_id={{ company.id }}&as_of_date={{ as_of_date_param }}" class="button">{% translate "Download PDF" %}</a>
+            </div>
+        {% else %}
+            <p class="info-message">{% translate "Report data could not be generated. Please check your selections or try again." %}</p>
+        {% endif %}
+    {% else %}
+         <p class="info-message">{% translate "Please select the company and date to view the report." %}</p>
+    {% endif %}
+</div>
+{% endblock %}

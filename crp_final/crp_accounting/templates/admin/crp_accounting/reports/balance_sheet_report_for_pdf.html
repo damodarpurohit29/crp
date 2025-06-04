@@ -1,0 +1,144 @@
+{# crp_accounting/templates/admin/crp_accounting/reports/balance_sheet_report_for_pdf.html #}
+{% extends "admin/crp_accounting/reports/pdf_base.html" %}
+{% load i18n l10n humanize %}
+
+{% block title %}{{ report_title }}{% endblock %}
+
+{% block report_specific_styles %}
+<style type="text/css">
+    /* Balance Sheet PDF specific styles, if any, beyond pdf_base.css */
+    .bs-columns-container-pdf {
+        /* Using a table for two-column layout in PDF is more reliable than flexbox for xhtml2pdf */
+    }
+    .bs-columns-container-pdf > tbody > tr > td {
+        width: 50%;
+        vertical-align: top;
+        padding: 0 5px; /* Spacing between columns */
+        border: none; /* Remove table borders for the layout table */
+    }
+    .bs-columns-container-pdf > tbody > tr > td:first-child {
+        padding-left: 0;
+    }
+    .bs-columns-container-pdf > tbody > tr > td:last-child {
+        padding-right: 0;
+    }
+</style>
+{% endblock %}
+
+{% block report_content %}
+    {% if report_error %}
+        <p class="report-error-message">{{ report_error }}</p>
+    {% elif report_data_available %}
+        <div class="report-header-section">
+            <div class="company-main-name">{{ company.name }}</div>
+            <div class="report-main-title">{% translate "Balance Sheet" %}</div>
+            <div class="report-meta-info">
+                <p><strong>{% translate "As of Date" %}:</strong> {{ as_of_date_to_display|date:"F d, Y"|default:"N/A" }}</p>
+                <p><strong>{% translate "Currency" %}:</strong> {{ report_currency|default_if_none:company.default_currency_code|default:"N/A" }}
+                   {% if company.default_currency_symbol %}({{ company.default_currency_symbol }}){% endif %}
+                </p>
+                <p><strong>{% translate "Status" %}:</strong>
+                    {% if is_balanced %}
+                        <span class="status-balanced">{% translate "Balanced" %}</span>
+                    {% else %}
+                        <span class="status-unbalanced">{% translate "OUT OF BALANCE" %}</span>
+                        {% if balance_difference is not None %}
+                            {% with decimal_places=company.currency_decimal_places|default:2 %}
+                            <span style="color: #555555;"> ({% translate "Diff:" %} {{ balance_difference|floatformat:decimal_places|intcomma }})</span>
+                            {% endwith %}
+                        {% endif %}
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+
+        <table class="bs-columns-container-pdf"> {# Using a table for 2-column PDF layout #}
+            <tr>
+                <td> {# Left Column - Assets #}
+                    <div class="bs-column">
+                        <div class="bs-section">
+                            <div class="bs-section-header">{% translate "Assets" %}</div>
+                            <table>
+                                <tbody>
+                                    {% include "admin/crp_accounting/reports/_balance_sheet_node.html" with nodes=assets.hierarchy company=company is_pdf=is_pdf %}
+                                </tbody>
+                            </table>
+                            <div class="bs-section-footer">
+                                <table>
+                                    <tr>
+                                        <th>{% translate "Total Assets" %}</th>
+                                        <td class="numeric">
+                                            {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                                {{ assets.total|floatformat:decimal_places|intcomma }}
+                                            {% endwith %}
+                                        </td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </td>
+                <td> {# Right Column - Liabilities & Equity #}
+                    <div class="bs-column">
+                        <div class="bs-section">
+                            <div class="bs-section-header">{% translate "Liabilities" %}</div>
+                            <table>
+                                <tbody>
+                                    {% include "admin/crp_accounting/reports/_balance_sheet_node.html" with nodes=liabilities.hierarchy company=company is_pdf=is_pdf %}
+                                </tbody>
+                            </table>
+                            <div class="bs-section-footer">
+                                <table>
+                                    <tr>
+                                        <th>{% translate "Total Liabilities" %}</th>
+                                        <td class="numeric">
+                                            {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                                {{ liabilities.total|floatformat:decimal_places|intcomma }}
+                                            {% endwith %}
+                                        </td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="bs-section">
+                            <div class="bs-section-header">{% translate "Equity" %}</div>
+                            <table>
+                                <tbody>
+                                    {% include "admin/crp_accounting/reports/_balance_sheet_node.html" with nodes=equity.hierarchy company=company is_pdf=is_pdf %}
+                                </tbody>
+                            </table>
+                            <div class="bs-section-footer">
+                                <table>
+                                    <tr>
+                                        <th>{% translate "Total Equity" %}</th>
+                                        <td class="numeric">
+                                            {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                                {{ equity.total|floatformat:decimal_places|intcomma }}
+                                            {% endwith %}
+                                        </td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="bs-section-footer total-liab-equity-footer">
+                              <table>
+                                <tr>
+                                    <th>{% translate "Total Liabilities and Equity" %}</th>
+                                    <td class="numeric">
+                                        {% with liab_plus_equity=liabilities.total|add:equity.total decimal_places=company.currency_decimal_places|default:2 %}
+                                            {{ liab_plus_equity|floatformat:decimal_places|intcomma }}
+                                        {% endwith %}
+                                    </td>
+                                </tr>
+                            </table>
+                         </div>
+                    </div>
+                </td>
+            </tr>
+        </table>
+
+    {% else %}
+        <p class="report-error-message">{% translate "Report data is not available for PDF generation." %}</p>
+    {% endif %}
+{% endblock %}

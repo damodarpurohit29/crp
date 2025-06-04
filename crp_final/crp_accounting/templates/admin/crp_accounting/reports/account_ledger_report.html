@@ -1,0 +1,267 @@
+{# crp_accounting/templates/admin/crp_accounting/reports/account_ledger_report.html #}
+
+{% extends "admin/base_site.html" %}
+{% load i18n static humanize l10n %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <style>
+        /* --- General Report Styles --- */
+        .report-container {
+            font-size: 0.9rem;
+        }
+
+        /* Date Selector Form */
+        .date-selector-form {
+            background: var(--changelist-bg, #f8f8f8);
+            padding: 10px 15px;
+            border: 1px solid var(--border-color, #ccc);
+            border-radius: 4px;
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 15px;
+        }
+        .date-selector-form label { margin-right: 5px; font-weight: bold;}
+        .date-selector-form input[type="date"] { padding: 6px 10px; border: 1px solid var(--input-border-color, #ccc); border-radius: 4px; font-size: 0.9em; }
+        .date-selector-form button { /* Uses default admin button styles */ }
+
+        /* Report Header */
+        .report-header { margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid var(--hairline-color, #e1e1e1); }
+        .report-header .company-name { font-size: 1.2em; font-weight: bold; color: var(--primary, #007bff); margin-bottom: 8px; }
+        .report-header .account-title { margin-bottom: 5px; font-size: 1.5em; color: var(--header-color, #333); }
+        .report-header .account-subtitle { color: var(--text-muted-color, #777); font-size: 0.9em; }
+        .report-header .report-period { margin-bottom: 0.4em; font-size: 0.95em; color: var(--text-color, #444); }
+        .report-header .account-currency { font-size: 0.95em; color: var(--text-color, #444); }
+
+
+        /* Main Table Styling */
+        #changelist .results { overflow-x: auto; }
+        #result_list {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 0;
+            border: 1px solid var(--border-color, #ccc);
+        }
+
+        /* Table Headers */
+        #result_list thead th {
+            background-color: var(--header-bg, #f0f0f0);
+            color: var(--header-color, #333);
+            padding: 10px 8px;
+            border: 1px solid var(--border-color, #ccc);
+            text-align: center;
+            font-weight: bold;
+            white-space: nowrap;
+            position: sticky;
+            top: 0; /* Adjust if you have a fixed admin header above this */
+            z-index: 10;
+        }
+        #result_list thead th.numeric { text-align: right; }
+        #result_list thead th.left-align { text-align: left; }
+
+        /* Table Body Cells */
+        #result_list tbody td {
+            padding: 7px 8px;
+            border: 1px solid var(--hairline-color, #eee);
+            vertical-align: top;
+        }
+        #result_list tbody tr:hover { background-color: var(--selected-row, #f5f5f5); }
+
+        /* Cell Alignments */
+        #result_list td.numeric { text-align: right; white-space: nowrap; font-family: var(--font-family-monospace, monospace); }
+        #result_list td.centered { text-align: center; white-space: nowrap; }
+        #result_list td.left-align { text-align: left; }
+        #result_list td.particulars-col { min-width: 250px; word-wrap: break-word; white-space: normal; } /* Allow particulars to wrap */
+
+        /* Footer Styling */
+        #result_list tfoot td, #result_list tfoot th {
+            padding: 9px 8px;
+            font-weight: bold;
+            border: 1px solid var(--border-color, #ccc);
+            background-color: var(--header-bg, #f0f0f0); /* Consistent with header */
+        }
+        #result_list tfoot .total-row th, #result_list tfoot .total-row td {
+             border-top: 1px solid var(--border-color, #ccc);
+        }
+         #result_list tfoot .closing-row th, #result_list tfoot .closing-row td {
+             border-top: 2px double var(--border-color, #ccc); /* Using double, ensure it renders well */
+             font-size: 1.05em;
+        }
+
+        /* Download Links/Actions */
+        .report-actions { margin-top: 1.5em; padding-top: 1em; border-top: 1px solid var(--hairline-color, #e1e1e1); text-align: right;}
+        .report-actions .button { margin-left: 10px; }
+    </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+    {# opts should be Account._meta, so opts.app_label will be 'crp_accounting' #}
+    › <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+
+    {# Link to Company List (Assuming standard admin URL name for your Company model) #}
+    {# Replace 'company_company_changelist' if your Company model admin URL is different #}
+    › <a href="{% url 'admin:company_company_changelist' %}">{% translate "Companies" %}</a>
+
+    {# ---- MODIFIED SECTION ---- #}
+    {# If a specific company context exists and is valid (e.g., company_id was in GET params) #}
+    {% if company and company.pk %}
+        › <a href="{% url 'admin:company_company_change' company.pk %}">{{ company.name }}</a>
+        {# Link to Account List filtered by this specific Company #}
+        › <a href="{% url 'admin:crp_accounting_account_changelist' %}?company__id__exact={{ company.pk }}">{% translate "Accounts" %} ({{company.name}})</a>
+    {% else %}
+        {# If no specific company context (e.g., company_id missing, Http404 caught), link to general Account list #}
+        › <a href="{% url 'admin:crp_accounting_account_changelist' %}">{% translate "Accounts" %}</a>
+    {% endif %}
+    {# ---- END MODIFIED SECTION ---- #}
+
+    › {{ title }} {# Title likely includes the account name, e.g., "Ledger for [Account Name]" or just "Account Ledger" if error #}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main" class="report-container">
+    <h1>{{ title }}</h1>
+
+    {# --- Company Context & Date Selector Form --- #}
+    <form method="GET" action="" class="date-selector-form">
+        {# Hidden input to preserve company context on submit (if not part of URL path) #}
+        {# If company.id is already in the URL path, this might be redundant for GET #}
+        {# but good if the form could POST or for clarity. #}
+        {% if company and company.id %}
+             <input type="hidden" name="company_id" value="{{ company.id }}"> {# Changed name to 'company_id' to match _get_company_from_request #}
+        {% endif %}
+
+        <label for="id_start_date">{% translate "From:" %}</label>
+        <input type="date" name="start_date" id="id_start_date" value="{{ start_date_param|date:'Y-m-d' }}" required>
+        <label for="id_end_date">{% translate "To:" %}</label>
+        <input type="date" name="end_date" id="id_end_date" value="{{ end_date_param|date:'Y-m-d' }}" required>
+        <button type="submit" class="button">{% translate "View Ledger" %}</button>
+    </form>
+
+    {% if report_error %}
+        <p class="errornote">{{ report_error }}</p>
+    {% else %}
+        {# --- Report Header with Company and Account Info --- #}
+        <div class="report-header">
+            {% if company %}
+                <div class="company-name">{{ company.name }}</div>
+            {% endif %}
+            {% if account %}
+                <h2 class="account-title">{{ account.account_name }} <span class="account-subtitle">({{ account.account_number }})</span></h2>
+                <p class="report-period"><strong>{% translate "Period" %}:</strong> {{ start_date_param|localize }} {% translate "to" %} {{ end_date_param|localize }}</p>
+                <p class="account-currency"><strong>{% translate "Account Currency" %}:</strong> {{ account.currency|default:_("N/A") }}</p>
+            {% else %}
+                 <p>{% translate "Account information not available." %}</p>
+            {% endif %}
+        </div>
+
+        {# --- Ledger Table --- #}
+        <div id="changelist" class="module">
+            <div class="results">
+                <table id="result_list">
+                    <thead>
+                        <tr>
+                            <th rowspan="2" scope="col">{% translate "Date" %}</th>
+                            <th rowspan="2" scope="col" class="left-align">{% translate "Particulars" %}</th>
+                            <th rowspan="2" scope="col">{% translate "Vch Type" %}</th>
+                            <th rowspan="2" scope="col">{% translate "Vch No" %}</th>
+                            <th colspan="2" scope="col">{% translate "Transaction" %}</th>
+                            <th colspan="2" scope="col">{% translate "Balance" %}</th>
+                        </tr>
+                        <tr>
+                            <th scope="col" class="numeric">{% translate "Debit" %}</th>
+                            <th scope="col" class="numeric">{% translate "Credit" %}</th>
+                            <th scope="col" class="numeric">{% translate "Amount" %}</th>
+                            <th scope="col" class="centered">{% translate "Dr/Cr" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {# Opening Balance Row #}
+                        <tr>
+                            <td>{{ start_date_param|localize }}</td>
+                            <td class="left-align particulars-col" colspan="5"><strong>{% translate "Opening Balance" %}</strong></td>
+                            {# Ensure opening_balance_display exists and has 'amount' and 'dr_cr' keys #}
+                            <td class="numeric"><strong>{{ opening_balance_display.amount|default:0|floatformat:2|intcomma }}</strong></td>
+                            <td class="centered"><strong>{{ opening_balance_display.dr_cr|default:"" }}</strong></td>
+                        </tr>
+
+                        {# Transaction Rows #}
+                        {% for tx in entries %} {# Changed from 'transactions' to 'entries' to match context variable from view #}
+                        <tr class="{% cycle 'row1' 'row2' as ledger_row_colors %}"> {# Renamed cycle variable #}
+                            <td>{{ tx.date|localize }}</td>
+                            {# MODIFIED LINE BELOW #}
+                            <td class="left-align particulars-col">
+                                {% if tx.debit > 0 %}
+                                    To {{ tx.particulars }}
+                                {% elif tx.credit > 0 %}
+                                    By {{ tx.particulars }}
+                                {% else %}
+                                    {{ tx.particulars }} {# Fallback for cases where neither debit nor credit is set, or if particulars are already fully descriptive #}
+                                {% endif %}
+                            </td>
+                            {# END OF MODIFIED LINE #}
+                            <td class="centered">{{ tx.voucher_type_display }}</td> {# Changed from tx.vch_type #}
+                            <td>
+                                {# Ensure tx.voucher_pk and company.pk are available and valid for the URL #}
+                                {% if tx.voucher_pk and company and company.pk %}
+                                <a href="{% url 'admin:crp_accounting_voucher_change' tx.voucher_pk %}?company_id={{ company.pk }}">{{ tx.vch_no }}</a> {# Added company_id to voucher link query #}
+                                {% else %}
+                                {{ tx.vch_no }}
+                                {% endif %}
+                            </td>
+                            <td class="numeric">{% if tx.debit and tx.debit != 0 %}{{ tx.debit|floatformat:2|intcomma }}{% endif %}</td>
+                            <td class="numeric">{% if tx.credit and tx.credit != 0 %}{{ tx.credit|floatformat:2|intcomma }}{% endif %}</td>
+                            {# Ensure running_balance_display exists and has 'amount' and 'dr_cr' #}
+                            <td class="numeric">{{ tx.running_balance_display.amount|default:0|floatformat:2|intcomma }}</td>
+                            <td class="centered">{{ tx.running_balance_display.dr_cr|default:"" }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="8" style="text-align: center; padding: 20px;">
+                                {% if company and account %} {# Check both company and account #}
+                                    {% blocktranslate with company_name=company.name account_name=account.account_name %}No transactions found for account '{{ account_name }}' in company '{{ company_name }}' for the selected period.{% endblocktranslate %}
+                                {% elif account %}
+                                    {% blocktranslate with account_name=account.account_name %}No transactions found for account '{{ account_name }}' for the selected period.{% endblocktranslate %}
+                                {% else %}
+                                    {% translate "No transactions found for the selected period. Account or company context might be missing." %}
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                     <tfoot>
+                        {# Period Totals Row #}
+                        <tr class="total-row">
+                            <th colspan="4" style="text-align: right;">{% translate "Period Totals:" %}</th>
+                            <td class="numeric">{{ total_debit|floatformat:2|intcomma }}</td>
+                            <td class="numeric">{{ total_credit|floatformat:2|intcomma }}</td>
+                            <td colspan="2"></td> {# Empty cells for balance columns #}
+                        </tr>
+                         {# Closing Balance Row #}
+                         <tr class="closing-row">
+                            <th colspan="6" style="text-align: right;">{% translate "Closing Balance:" %}</th>
+                            {# Ensure closing_balance_display exists and has 'amount' and 'dr_cr' keys #}
+                            <td class="numeric">{{ closing_balance_display.amount|default:0|floatformat:2|intcomma }}</td>
+                            <td class="centered">{{ closing_balance_display.dr_cr|default:"" }}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            {# --- Download Links/Actions --- #}
+            {# Changed from 'transactions' to 'entries' to match context variable #}
+            {% if entries %} {# Only show download if there's data #}
+             <div class="report-actions">
+                {# Ensure request.GET.urlencode correctly passes company_id if present #}
+                <a href="?{{ request.GET.urlencode }}&_export=excel" class="button">{% translate "Download Excel" %}</a>
+                <a href="?{{ request.GET.urlencode }}&_export=pdf" class="button">{% translate "Download PDF" %}</a>
+             </div>
+            {% endif %}
+        </div>
+    {% endif %} {# End of 'if not report_error' block #}
+</div> {# End content-main #}
+{% endblock %}
