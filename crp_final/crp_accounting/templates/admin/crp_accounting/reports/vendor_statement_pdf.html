@@ -1,0 +1,137 @@
+<!-- templates/admin/crp_accounting/reports/vendor_statement_pdf.html -->
+{% load humanize %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Statement of Account</title>
+    <style>
+        body {
+            font-family: "Helvetica", "Arial", sans-serif;
+            font-size: 9pt;
+            color: #333;
+        }
+        .container {
+            width: 100%;
+        }
+        .header-title {
+            text-align: center;
+            font-size: 18pt;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+        .info-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 25px;
+            font-size: 10pt;
+        }
+        .info-table td {
+            padding: 4px;
+            vertical-align: top;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #555;
+        }
+        .report-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .report-table th, .report-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .report-table th {
+            background-color: #004085;
+            color: #ffffff;
+            font-size: 10pt;
+            font-weight: bold;
+        }
+        .report-table .amount, .report-table .drcr {
+            text-align: right;
+        }
+        .report-table .balance-row {
+            font-weight: bold;
+            background-color: #f8f9fa;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+
+        <div class="header-title">Statement of Account</div>
+
+        <table class="info-table">
+            <tr>
+                <td width="15%" class="info-label">Statement For:</td>
+                <td width="35%">{{ supplier.name }}</td>
+                <td width="15%" class="info-label">From Company:</td>
+                <td width="35%">{{ company.name }}</td>
+            </tr>
+            <tr>
+                <td class="info-label">Period:</td>
+                <td>{{ start_date_param|date:"F d, Y" }} to {{ end_date_param|date:"F d, Y" }}</td>
+                <td class="info-label">Currency:</td>
+                <td>{{ report_currency }}</td>
+            </tr>
+        </table>
+
+        <table class="report-table">
+            <thead>
+                <tr>
+                    <!-- ======================================================= -->
+                    <!-- == UPDATED HEADERS TO MATCH YOUR WEB VIEW            == -->
+                    <!-- ======================================================= -->
+                    <th width="12%">Date</th>
+                    <th width="18%">Transaction Type</th>
+                    <th>Reference</th>
+                    <th class="amount" width="16%">Payment / Debit Note</th>
+                    <th class="amount" width="16%">Bill / Credit Note</th>
+                    <th class="amount" width="15%">Balance Due</th>
+                    <!-- We can remove the Dr/Cr column if it's not needed, to match the web view -->
+                </tr>
+            </thead>
+            <tbody>
+                <tr class="balance-row">
+                    <td>{{ start_date_param|date:"Y-m-d" }}</td>
+                    <td colspan="4">Opening Balance</td>
+                    <td class="amount">{{ opening_balance|intcomma }}</td>
+                </tr>
+                {% for line in lines %}
+                    <tr>
+                        <td>{{ line.date|date:"Y-m-d" }}</td>
+                        <td>{{ line.transaction_type }}</td>
+                        <td>{{ line.reference }}</td>
+                        <!-- ======================================================= -->
+                        <!-- == UPDATED KEYS TO MATCH YOUR SERVICE'S DATA         == -->
+                        <!-- == Assuming keys are 'payments' and 'charges'      == -->
+                        <!-- ======================================================= -->
+                        <td class="amount">
+                            {% if line.payments is not None %}{{ line.payments|intcomma }}{% endif %}
+                        </td>
+                        <td class="amount">
+                            {% if line.charges is not None %}{{ line.charges|intcomma }}{% endif %}
+                        </td>
+                        <td class="amount">{{ line.balance|intcomma }}</td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="6" style="text-align: center; padding: 20px;">
+                            No transactions found for this vendor in the selected period.
+                        </td>
+                    </tr>
+                {% endfor %}
+                <tr class="balance-row">
+                    <td colspan="5">Closing Balance as of {{ end_date_param|date:"Y-m-d" }}</td>
+                    <td class="amount">{{ closing_balance|intcomma }}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+</body>
+</html>

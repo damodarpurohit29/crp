@@ -1,0 +1,165 @@
+{# crp_accounting/templates/admin/crp_accounting/reports/ap_aging_report.html #}
+{% extends "admin/base_site.html" %}
+{% load i18n static report_tags %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <style>
+        .report-container { padding: 20px; }
+        .report-filters { margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: .25rem; }
+        .report-filters label { margin-right: 5px; font-weight: bold; }
+        .report-filters input[type="date"], .report-filters select, .report-filters input[type="text"] { margin-right: 15px; padding: .375rem .75rem; border: 1px solid #ced4da; border-radius: .25rem; }
+        .report-filters input[type="submit"] { cursor: pointer; }
+        .report-table { width: 100%; margin-bottom: 1rem; color: #212529; border-collapse: collapse; }
+        .report-table th, .report-table td { padding: .75rem; vertical-align: top; border-top: 1px solid #dee2e6; text-align: left; }
+        .report-table th { background-color: #e9ecef; border-bottom-width: 2px; }
+        .report-table td.amount, .report-table th.amount { text-align: right; }
+        .report-table tfoot td { font-weight: bold; }
+        .report-title { margin-bottom: 1rem; }
+        .report-company-info { margin-bottom: 1.5rem; }
+        .report-company-info h2, .report-company-info p { margin-bottom: 0.5rem; }
+        .report-downloads { margin-top: 20px; text-align: right; }
+        .report-downloads a { margin-left: 10px; }
+        .info-message { padding: 10px 15px; background-color: var(--selected-row-lighter, #eef); border: 1px solid var(--info-fg, #79aec8); color: var(--info-fg-darker, #365f8e); border-radius: 4px; margin-bottom: 20px; text-align: center;}
+    </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+    <div class="breadcrumbs">
+        <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a> ›
+        <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name|default:"Crp_Accounting" }}</a> ›
+        {{ title|default:"AP Aging Report" }}
+    </div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main" class="report-container">
+    <h1 class="report-title">{{ title|default:"AP Aging Report" }}</h1>
+
+    {% if messages %}
+        <ul class="messagelist">
+            {% for message in messages %}
+                <li{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message|capfirst }}</li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    {% if report_error %}
+        <p class="errornote">{{ report_error }}</p>
+    {% endif %}
+
+    <div class="report-filters">
+        <form method="get" action="">
+            {% if user.is_superuser and show_company_selector and all_companies %}
+                <label for="company_id_select_ap_aging">{% translate "Company:" %}</label>
+                <select name="company_id" id="company_id_select_ap_aging" onchange="this.form.submit()">
+                    <option value="">--- {% translate "Select Company" %} ---</option>
+                    {% for c_opt in all_companies %}
+                        {# *** CORRECTED LINE *** #}
+                        <option value="{{ c_opt.pk }}" {% if company.pk == c_opt.pk or request.GET.company_id == c_opt.pk %}selected{% endif %}>
+                            {{ c_opt.name }}
+                        </option>
+                    {% endfor %}
+                </select>
+                {% if as_of_date_param %}<input type="hidden" name="as_of_date" value="{{ as_of_date_param }}">{% endif %}
+                {% if aging_bucket_days_config_str %}<input type="hidden" name="aging_buckets" value="{{ aging_bucket_days_config_str }}">{% endif %}
+            {% elif company %}
+                 <input type="hidden" name="company_id" value="{{ company.pk }}">
+            {% endif %}
+
+            <label for="as_of_date_input_ap_aging">{% translate "As of Date:" %}</label>
+            <input type="date" name="as_of_date" id="as_of_date_input_ap_aging" value="{{ as_of_date_param }}" required>
+
+            <label for="aging_buckets_input_ap_aging">{% translate "Aging Buckets (days, comma-separated):" %}</label>
+            <input type="text" name="aging_buckets" id="aging_buckets_input_ap_aging" value="{{ aging_bucket_days_config_str|default:'0,30,60,90' }}" placeholder="e.g., 0,30,60,90">
+
+            <input type="submit" value="{% translate 'View Report' %}" class="button">
+        </form>
+    </div>
+
+    {% if not company and show_company_selector %}
+        <p class="info-message">{% translate "Please select a company to view the report." %}</p>
+    {% elif company and not as_of_date_to_display %}
+         <p class="info-message">{% translate "Please select an 'As of Date' to generate the AP Aging Report." %}</p>
+    {% elif company and report_data_available and not report_error %}
+        <div class="report-company-info">
+            <h2>
+                {% translate "Company" %}:
+                <a href="{% url 'admin:company_company_change' company.pk %}" target="_blank">{{ company.name }}</a>
+            </h2>
+            <p>{% translate "Report as of" %}: {{ as_of_date_to_display|date:"DATE_FORMAT" }}</p>
+            <p>{% translate "Currency" %}: {{ report_currency }}</p>
+        </div>
+
+        {% if aging_data %}
+            <table class="report-table">
+                <thead>
+                    <tr>
+                        <th>{% translate "Supplier Name" %}</th>
+                        {% for bucket_label in bucket_labels %}
+                            <th class="amount">{{ bucket_label }}</th>
+                        {% endfor %}
+                        <th class="amount">{% translate "Total Due" %}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in aging_data %}
+                        <tr>
+                            <td>
+                                {% if entry.party_pk %}
+                                <a href="{% url 'admin:crp_accounting_party_change' entry.party_pk %}" target="_blank">
+                                    {{ entry.party_name }}
+                                </a>
+                                {% else %}
+                                    {{ entry.party_name }}
+                                {% endif %}
+                            </td>
+                            {% for bucket_label in bucket_labels %}
+                                <td class="amount">
+                                    {% with item_val=entry.buckets|get_item:bucket_label decimal_places=company.currency_decimal_places|default:2 %}
+                                    {{ item_val|floatformat:decimal_places|default:"0.00" }}
+                                    {% endwith %}
+                                </td>
+                            {% endfor %}
+                            <td class="amount">
+                                {% with decimal_places=company.currency_decimal_places|default:2 %}
+                                {{ entry.total_due|floatformat:decimal_places }}
+                                {% endwith %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td><strong>{% translate "Grand Totals" %}</strong></td>
+                        {% for bucket_label in bucket_labels %}
+                            <td class="amount">
+                                {% with item_val=grand_totals_by_bucket|get_item:bucket_label decimal_places=company.currency_decimal_places|default:2 %}
+                                <strong>{{ item_val|floatformat:decimal_places|default:"0.00" }}</strong>
+                                {% endwith %}
+                            </td>
+                        {% endfor %}
+                        <td class="amount">
+                            {% with decimal_places=company.currency_decimal_places|default:2 %}
+                            <strong>{{ grand_total_due_all_suppliers|floatformat:decimal_places }}</strong>
+                            {% endwith %}
+                        </td>
+                    </tr>
+                </tfoot>
+            </table>
+            <div class="report-downloads">
+                {% if company and as_of_date_param %}
+                    {% url 'crp_accounting_api:admin-download-ap-aging-excel' as excel_url %}
+                    {% url 'crp_accounting_api:admin-download-ap-aging-pdf' as pdf_url %}
+                    <a href="{{ excel_url }}?{{ request.GET.urlencode }}" class="button">{% translate "Download Excel" %}</a>
+                    <a href="{{ pdf_url }}?{{ request.GET.urlencode }}" class="button">{% translate "Download PDF" %}</a>
+                {% endif %}
+            </div>
+        {% elif not report_error %}
+            <p class="info-message">{% translate "No outstanding payables found for the selected criteria." %}</p>
+        {% endif %}
+    {% elif not report_error %}
+         <p class="info-message">{% translate "Please select valid criteria to view the report." %}</p>
+    {% endif %}
+</div>
+{% endblock %}

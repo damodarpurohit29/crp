@@ -1,0 +1,68 @@
+{% load static i18n %}
+<!DOCTYPE html>
+<html lang="{{ request.LANGUAGE_CODE|default:"en-us" }}">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title }}</title>
+    <style>
+        /* --- PDF-SPECIFIC STYLES --- */
+        body { font-family: "Helvetica", "Arial", sans-serif; color: #333; font-size: 10pt; }
+        @page {
+            size: a4 portrait;
+            margin: 1.5cm; /* Adjust margins as needed */
+
+            @frame header_frame { /* Static header for PDF */
+                -pdf-frame-content: page-header-content;
+                left: 1.5cm; right: 1.5cm; top: 0.5cm; height: 1cm;
+            }
+            @frame footer_frame { /* Static footer for PDF */
+                -pdf-frame-content: page-footer-content;
+                left: 1.5cm; right: 1.5cm; bottom: 0.5cm; height: 1cm;
+            }
+        }
+
+        .report-container { max-width: 100%; margin: 0 auto; padding: 0; }
+
+        .report-header-section { margin-bottom: 1em; padding-bottom: 10px; border-bottom: 2px solid #417690; text-align: center; }
+        .report-header-section .company-main-name { font-size: 1.4em; font-weight: bold; color: #417690; margin-bottom: 3px; }
+        .report-header-section .report-main-title { font-size: 1.2em; font-weight: 600; margin-bottom: 8px; color: #333; }
+
+        /* Using -pdf-table for basic layout in PDF for meta info */
+        .report-meta-info { display: -pdf-table; width: 100%; font-size: 0.9em; margin-top: 8px; padding: 0 2px; border-top: 1px dashed #adb5bd; padding-top: 8px; }
+        .report-meta-info p { margin-bottom: 0.2em; display: -pdf-table-cell; padding-right: 10px;}
+        .report-meta-info p:last-child { padding-right: 0; text-align: right; } /* Align last item (status) to right */
+
+        .status-balanced { color: #28a745; font-weight: bold; }
+        .status-unbalanced { color: #dc3545; font-weight: bold; }
+
+        #changelist .results { overflow-x: visible; } /* No horizontal scroll for PDF */
+        #result_list { width: 100%; border-collapse: collapse; margin-top: 0; border: 1px solid #dee2e6; font-size: 0.85em; background-color: #ffffff; }
+        #result_list td, #result_list th { padding: 5px 8px; border-bottom: 1px solid #e9ecef; vertical-align: top; text-align: left; word-wrap: break-word; }
+        #result_list thead th { background-color: #e9ecef; color: #495057; font-weight: bold; border-bottom: 2px solid #417690; white-space: nowrap; }
+        .numeric { text-align: right !important; font-family: "Courier New", Courier, monospace; white-space: nowrap;}
+        #result_list thead th.numeric { text-align: right; }
+
+        #result_list tfoot .total-row th,
+        #result_list tfoot .total-row td { font-weight: bold; font-size: 1.0em; border-top: 2px solid #adb5bd; padding-top: 6px; padding-bottom: 6px; background-color: #f1f3f5; }
+        #result_list tfoot .total-row th { text-align: right; padding-right: 0.8em;}
+
+        .no-results td { text-align: center; padding: 20px !important; color: #6c757d; }
+        .pdf-summary-note { font-size:0.8em; margin-top:5px; color: #6c757d; font-style: italic; text-align: center; }
+    </style>
+</head>
+<body>
+    {# PDF Header Content #}
+    <div id="page-header-content" style="text-align: center; font-size: 0.8em;">
+        {% if company %}{{ company.name }} - {% endif %}{{ title|truncatewords:4 }} - {% now "DATE_FORMAT" %}
+    </div>
+
+    {# PDF Footer Content #}
+    <div id="page-footer-content" style="text-align: center; font-size: 0.8em;">
+        Page <pdf:pagenumber /> of <pdf:pagecount />
+    </div>
+
+    <div class="report-container">
+        {% block report_content %}{% endblock %}
+    </div>
+</body>
+</html>

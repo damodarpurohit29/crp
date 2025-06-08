@@ -1,0 +1,137 @@
+<!-- templates/admin/crp_accounting/reports/profit_loss_pdf.html -->
+{% load mathfilters %} <!-- 1. LOAD THE NEW FILTERS -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ report_title }}</title>
+    <style>
+        @page {
+            size: a4 portrait;
+            margin: 1.5cm;
+        }
+        body {
+            font-family: "Helvetica", "Arial", sans-serif;
+            font-size: 10pt;
+            color: #333;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 25px;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 10px;
+        }
+        .header h2 {
+            margin: 0;
+            font-size: 16pt;
+        }
+        .header h3, .header p {
+            margin: 5px 0 0 0;
+            font-size: 11pt;
+            font-weight: normal;
+        }
+        .report-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .report-table th, .report-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .report-table th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        .report-table .amount {
+            text-align: right;
+        }
+        .report-table .subtotal-row td {
+            font-weight: bold;
+            background-color: #f8f8f8;
+        }
+        .report-table .net-income-row td {
+            font-weight: bold;
+            border-top: 2px solid #333;
+            background-color: #e9ecef;
+        }
+        .notes-section {
+            margin-top: 30px;
+            page-break-inside: avoid;
+        }
+        .notes-section h4 {
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 5px;
+        }
+        .notes-table {
+            width: 100%;
+            font-size: 9pt;
+        }
+        .notes-table td {
+            padding: 4px;
+            border: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h2>{{ company.name }}</h2>
+        <h3>{{ report_title }}</h3>
+        <p>For the period: {{ start_date_param|date:"F d, Y" }} to {{ end_date_param|date:"F d, Y" }}</p>
+    </div>
+
+    <table class="report-table">
+        <thead>
+            <tr>
+                <th width="75%">Description</th>
+                <th class="amount" width="25%">Amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for line in report_lines %}
+                <tr class="{% if line.section_key == 'NET_INCOME' %}net-income-row{% elif line.is_subtotal %}subtotal-row{% endif %}">
+                    <td>
+                        <!-- 2. USE THE NEW MULTIPLICATION FILTER -->
+                        <span style="padding-left: {{ line.level|default:0|mul:20 }}px;">
+                            {{ line.title }}
+                            {% if line.has_note and line.note_ref %}(Note {{ line.note_ref }}){% endif %}
+                        </span>
+                    </td>
+                    <td class="amount">
+                        {% if line.amount is not None %}
+                            {{ report_currency_symbol }} {{ line.amount|floatformat:2 }}
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% if financial_notes_data %}
+        <div class="notes-section">
+            <h4>Financial Notes</h4>
+            {% for ref, note in financial_notes_data.items %}
+                <table class="notes-table">
+                    <tr>
+                        <td colspan="2"><strong>Note {{ ref }}: {{ note.title }}</strong></td>
+                    </tr>
+                    {% for detail in note.details %}
+                        <tr>
+                            <td width="75%" style="padding-left: 20px;">{{ detail.account_name }}</td>
+                            <td class="amount" width="25%">{{ report_currency_symbol }} {{ detail.amount|floatformat:2 }}</td>
+                        </tr>
+                    {% endfor %}
+                    <tr>
+                        <td style="font-weight: bold; padding-left: 20px; border-top: 1px solid #ccc;">Total for Note {{ ref }}</td>
+                        <td class="amount" style="font-weight: bold; border-top: 1px solid #ccc;">{{ report_currency_symbol }} {{ note.total_amount|floatformat:2 }}</td>
+                    </tr>
+                </table>
+                <br>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+</body>
+</html>

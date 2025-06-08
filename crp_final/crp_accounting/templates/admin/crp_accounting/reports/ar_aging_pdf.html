@@ -1,0 +1,109 @@
+<!-- templates/admin/crp_accounting/reports/ar_aging_pdf.html -->
+{% load humanize report_tags mathfilters %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ report_title }}</title>
+    <style>
+        @page {
+            size: a4 landscape;
+            margin: 1.5cm;
+        }
+        body {
+            font-family: "Helvetica", "Arial", sans-serif;
+            font-size: 9pt;
+            color: #333;
+        }
+        .header { text-align: center; margin-bottom: 20px; }
+        .header h2 { margin: 0; font-size: 16pt; color: #000; }
+        .header h3 { margin: 4px 0; font-size: 12pt; color: #555; font-weight: normal;}
+        .header p { margin: 4px 0; font-size: 10pt; color: #555; }
+
+        .report-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            table-layout: fixed;
+        }
+        .report-table th, .report-table td {
+            border: 1px solid #ccc;
+            padding: 6px;
+            text-align: left;
+            word-wrap: break-word;
+        }
+        .report-table th {
+            background-color: #004085;
+            color: #ffffff;
+            font-weight: bold;
+            padding: 8px;
+        }
+        .report-table .amount { text-align: right; }
+        .report-table tbody tr:nth-child(even) { background-color: #f8f9fa; }
+        .report-table tfoot td {
+            font-weight: bold;
+            background-color: #e9ecef;
+            border-top: 2px solid #004085;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h2>{{ company.name }}</h2>
+        <h3>{{ report_title }}</h3>
+        <p>As of: {{ as_of_date_param|date:"F d, Y" }}</p>
+    </div>
+
+    <table class="report-table">
+        <thead>
+            <tr>
+                <!-- Your service returns a list of dictionaries, so we access keys -->
+                <th width="30%">Customer Name</th>
+                {% for label in bucket_labels %}
+                    <th class="amount">{{ label }}</th>
+                {% endfor %}
+                <th class="amount">Total Outstanding</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- This loop iterates through the list from `sorted_ar_aging_data` -->
+            {% for entry in aging_data %}
+                <tr>
+                    <td>{{ entry.customer_name|default:"(Name Not Available)" }}</td>
+                    {% for label in bucket_buckets %}
+                        <td class="amount">
+                            {% with bucket_value=entry.buckets|get_item:label %}
+                                {{ report_currency_symbol }} {{ bucket_value|default:0.00|intcomma }}
+                            {% endwith %}
+                        </td>
+                    {% endfor %}
+                    <td class="amount">{{ report_currency_symbol }} {{ entry.total_due|intcomma }}</td>
+                </tr>
+            {% empty %}
+                <tr>
+                    <td colspan="{{ bucket_labels|length|add:2 }}" style="text-align: center; padding: 20px;">
+                        No outstanding receivables found for the selected date.
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <td><strong>Grand Totals</strong></td>
+                {% for label in bucket_labels %}
+                    <td class="amount">
+                        {% with total_value=grand_totals_by_bucket|get_item:label %}
+                            <strong>{{ report_currency_symbol }} {{ total_value|default:0.00|intcomma }}</strong>
+                        {% endwith %}
+                    </td>
+                {% endfor %}
+                <td class="amount">
+                    <strong>{{ report_currency_symbol }} {{ grand_total_due_all_customers|intcomma }}</strong>
+                </td>
+            </tr>
+        </tfoot>
+    </table>
+</body>
+</html>

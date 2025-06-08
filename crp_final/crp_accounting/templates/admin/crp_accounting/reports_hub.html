@@ -1,0 +1,148 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static %}
+
+{% block title %}{{ title }} | {% translate "CRP Reports Hub" %}{% endblock %}
+
+{% block breadcrumbs %}
+    <div class="breadcrumbs">
+        <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a> ›
+        <a href="{% url 'admin:app_list' app_label='crp_accounting' %}">
+            {{ opts.app_config.verbose_name|default:_("Accounting") }}
+        </a> ›
+        {{ title|default:_("Reports Hub") }}
+    </div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main" style="padding: 20px;">
+    <h1>{{ title|default:_("Accounting Reports Hub") }}</h1>
+
+    {% if user.is_superuser %}
+    <form method="get" id="companyFilterForm" style="margin-bottom: 20px; padding: 10px; background-color: #f0f0f0; border: 1px solid #ddd;">
+        <label for="company_id_hub_select" style="margin-right: 5px; font-weight:bold;">{% translate "View Reports for Company:" %}</label>
+        <select name="company_id" id="company_id_hub_select" style="margin-right:10px; padding: 5px;">
+            <option value="">--- {% translate "Select Company (for filtered links)" %} ---</option>
+            {% for c_opt in all_companies %} {# Ensure 'all_companies' is passed from view #}
+                {# Corrected: Removed stringformat for integer PK comparison with GET param #}
+                <option value="{{ c_opt.pk }}" {% if request.GET.company_id == c_opt.pk|stringformat:"s" %}selected{% endif %}>
+                    {{ c_opt.name }}
+                </option>
+            {% endfor %}
+        </select>
+        <button type="button" onclick="applyCompanyFilterToReportLinks()" class="button">{% translate "Apply Filter to Links" %}</button>
+    </form>
+    <script>
+        function applyCompanyFilterToReportLinks() {
+            const companyId = document.getElementById('company_id_hub_select').value;
+            const reportLinks = document.querySelectorAll('.report-link-item a'); // Target links within these items
+
+            reportLinks.forEach(link => {
+                let baseUrl = link.getAttribute('data-base-url');
+                if (baseUrl) {
+                    // Construct URL relative to current origin if baseUrl is relative
+                    let newUrl = new URL(baseUrl, window.location.origin);
+
+                    // Remove all existing query parameters from the base URL first
+                    // to prevent duplication or conflicts if some are already there.
+                    // This is important if base_url might already have other params.
+                    let cleanBaseUrl = new URL(baseUrl, window.location.origin);
+                    cleanBaseUrl.search = ''; // Clear existing search params from base
+
+                    newUrl = cleanBaseUrl; // Start with the clean base
+
+                    if (companyId) {
+                        newUrl.searchParams.set('company_id', companyId);
+                    }
+                    // Note: We are not deleting 'company_id' if not selected,
+                    // because the base URL should ideally not have it.
+                    // The links will just go to their base URL without the company_id param.
+
+                    link.href = newUrl.toString();
+                }
+            });
+             // Also update the form action so submitting the form itself goes to the filtered URL
+            const form = document.getElementById('companyFilterForm');
+            if (form) {
+                let currentAction = new URL(form.action || window.location.href, window.location.origin);
+                if (companyId) {
+                    currentAction.searchParams.set('company_id', companyId);
+                } else {
+                    currentAction.searchParams.delete('company_id');
+                }
+                // To prevent form submission from adding company_id twice if GET method adds it
+                // and to make the URL clean when "All Companies" is selected,
+                // we can submit the form to the current page path without query params,
+                // relying on the select field's value to be picked up by the view.
+                // Or, just let the filter apply to links and user navigates.
+                // For simplicity, we'll let the button only update links.
+                // The form submission itself (if we added a submit button) would naturally carry the selected company_id.
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const companyIdFromUrl = urlParams.get('company_id');
+            const selectElement = document.getElementById('company_id_hub_select');
+
+            if (selectElement) { // Ensure element exists
+                if (companyIdFromUrl) {
+                    selectElement.value = companyIdFromUrl;
+                }
+                // Apply filter to links on page load based on current URL or dropdown selection
+                applyCompanyFilterToReportLinks();
+
+                // Add event listener to dropdown to apply filter on link URLs change
+                selectElement.addEventListener('change', applyCompanyFilterToReportLinks);
+            }
+        });
+    </script>
+    {% endif %}
+
+    <div style="margin-top: 20px;">
+        <h2 style="border-bottom: 1px solid #ccc; padding-bottom: 5px;">{% translate "Financial Statements" %}</h2>
+        <ul style="list-style-type: none; padding-left: 0;">
+            <li class="report-link-item" style="margin-bottom: 8px;"><a href="{% url 'crp_accounting_api:admin-view-trial-balance' %}" data-base-url="{% url 'crp_accounting_api:admin-view-trial-balance' %}">{% translate 'Trial Balance' %}</a></li>
+            <li class="report-link-item" style="margin-bottom: 8px;"><a href="{% url 'crp_accounting_api:admin-view-profit-loss' %}" data-base-url="{% url 'crp_accounting_api:admin-view-profit-loss' %}">{% translate 'Profit & Loss Statement' %}</a></li>
+            <li class="report-link-item" style="margin-bottom: 8px;"><a href="{% url 'crp_accounting_api:admin-view-balance-sheet' %}" data-base-url="{% url 'crp_accounting_api:admin-view-balance-sheet' %}">{% translate 'Balance Sheet' %}</a></li>
+        </ul>
+    </div>
+
+    <div style="margin-top: 20px;">
+        <h2 style="border-bottom: 1px solid #ccc; padding-bottom: 5px;">{% translate "Receivables Reports" %}</h2>
+        <ul style="list-style-type: none; padding-left: 0;">
+            <li class="report-link-item" style="margin-bottom: 8px;"><a href="{% url 'crp_accounting_api:admin-view-ar-aging' %}" data-base-url="{% url 'crp_accounting_api:admin-view-ar-aging' %}">{% translate 'AR Aging Report' %}</a></li>
+            <li class="report-link-item" style="margin-bottom: 8px;"><a href="{% url 'crp_accounting_api:admin-view-customer-statement-base' %}" data-base-url="{% url 'crp_accounting_api:admin-view-customer-statement-base' %}">{% translate 'Customer Statement' %}</a></li>
+        </ul>
+    </div>
+
+    {# === NEW SECTION FOR ACCOUNTS PAYABLE REPORTS === #}
+    <div style="margin-top: 20px;">
+        <h2 style="border-bottom: 1px solid #ccc; padding-bottom: 5px;">{% translate "Payables Reports" %}</h2>
+        <ul style="list-style-type: none; padding-left: 0;">
+            {# Ensure these URL names match what you define in your urls_api.py for the new AP report views #}
+            <li class="report-link-item" style="margin-bottom: 8px;">
+                <a href="{% url 'crp_accounting_api:admin-view-ap-aging' %}"
+                   data-base-url="{% url 'crp_accounting_api:admin-view-ap-aging' %}">
+                   {% translate 'AP Aging Report' %}
+                </a>
+            </li>
+            <li class="report-link-item" style="margin-bottom: 8px;">
+                <a href="{% url 'crp_accounting_api:admin-view-vendor-statement-base' %}"
+                   data-base-url="{% url 'crp_accounting_api:admin-view-vendor-statement-base' %}">
+                   {% translate 'Vendor Statement' %}
+                </a>
+            </li>
+        </ul>
+    </div>
+    {# === END NEW SECTION === #}
+
+
+    <div style="margin-top: 20px;">
+        <h2 style="border-bottom: 1px solid #ccc; padding-bottom: 5px;">{% translate "Ledger Reports" %}</h2>
+        <ul style="list-style-type: none; padding-left: 0;">
+            <li style="margin-bottom: 8px;"><em>{% translate "Account Ledger (Access from Account List View directly)" %}</em></li>
+        </ul>
+    </div>
+
+</div>
+{% endblock %}

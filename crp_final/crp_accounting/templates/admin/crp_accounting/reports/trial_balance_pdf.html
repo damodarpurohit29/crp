@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ report_title }}</title>
+    <style>
+        @page {
+            size: a4 portrait;
+            margin: 1.5cm;
+        }
+        body {
+            font-family: "Helvetica", "Arial", sans-serif;
+            font-size: 9pt;
+            color: #333;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+        .header h2 {
+            margin: 0;
+            font-size: 16pt;
+        }
+        .header h3, .header p {
+            margin: 5px 0 0 0;
+            font-size: 11pt;
+            font-weight: normal;
+        }
+        .report-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .report-table th, .report-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            /* This is the key to fixing text overlap */
+            word-wrap: break-word;
+        }
+        .report-table th {
+            background-color: #f0f0f0; /* Light grey background for headers */
+            font-weight: bold;
+            color: #000;
+        }
+        .report-table .amount {
+            text-align: right;
+        }
+        .report-table .group-row td {
+            font-weight: bold;
+        }
+        .report-table tfoot td {
+            font-weight: bold;
+            background-color: #f0f0f0;
+            border-top: 2px solid #333;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h2>{{ company.name }}</h2>
+        <h3>{{ report_title }}</h3>
+        <!-- This will now display correctly because of the fix in Step 1 -->
+        <p>As of: {{ as_of_date_param|date:"F d, Y" }}</p>
+    </div>
+
+    <table class="report-table">
+        <thead>
+            <tr>
+                <th width="20%">Account Number</th>
+                <th width="40%">Account Name</th>
+                <th class="amount" width="20%">Debit</th>
+                <th class="amount" width="20%">Credit</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entry in flat_entries %}
+                {% if entry.debit != 0 or entry.credit != 0 or entry.is_group %}
+                    <tr class="{% if entry.is_group %}group-row{% endif %}">
+                        <td>{{ entry.account_number }}</td>
+                        <td>{{ entry.account_name }}</td>
+                        <!-- Added currency symbol display -->
+                        <td class="amount">{{ report_currency_symbol }} {{ entry.debit|floatformat:2 }}</td>
+                        <td class="amount">{{ report_currency_symbol }} {{ entry.credit|floatformat:2 }}</td>
+                    </tr>
+                {% endif %}
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <td colspan="2"><strong>Totals</strong></td>
+                <td class="amount"><strong>{{ report_currency_symbol }} {{ total_debit|floatformat:2 }}</strong></td>
+                <td class="amount"><strong>{{ report_currency_symbol }} {{ total_credit|floatformat:2 }}</strong></td>
+            </tr>
+        </tfoot>
+    </table>
+
+    {% if not is_balanced %}
+        <p style="color: red; font-weight: bold; text-align: center; margin-top: 20px;">
+            Note: The Trial Balance is out of balance!
+        </p>
+    {% endif %}
+
+</body>
+</html>

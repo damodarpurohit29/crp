@@ -1,0 +1,184 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static report_tags %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <style>
+        .report-container { padding: 20px; }
+        .report-filters { margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: .25rem; }
+        .report-filters label { margin-right: 5px; font-weight: bold; display: block; margin-bottom: .25rem; }
+        .report-filters input[type="date"], .report-filters select { margin-right: 15px; margin-bottom: 10px; padding: .375rem .75rem; border: 1px solid #ced4da; border-radius: .25rem; }
+        .report-filters input[type="submit"] { cursor: pointer; }
+        .report-table { width: 100%; margin-bottom: 1rem; color: #212529; border-collapse: collapse; }
+        .report-table th, .report-table td { padding: .75rem; vertical-align: top; border-top: 1px solid #dee2e6; text-align: left; }
+        .report-table th { background-color: #e9ecef; border-bottom-width: 2px; }
+        .report-table td.amount, .report-table th.amount { text-align: right; }
+        .report-table tfoot td, .report-table .balance-row td { font-weight: bold; }
+        .report-title { margin-bottom: 1rem; }
+        .report-header-info { margin-bottom: 1.5rem; }
+        .report-header-info h2, .report-header-info p { margin-bottom: 0.5rem; }
+        .report-downloads { margin-top: 20px; }
+        .report-downloads a { margin-right: 10px; }
+    </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+    <div class="breadcrumbs">
+        <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a> ›
+        <a href="{% url 'admin:app_list' app_label='crp_accounting' %}">{% translate app_label|capfirst|default:"Crp_Accounting" %}</a> ›
+        <a href="#">{% translate 'Reports' %}</a> ›
+        {{ title|default:"Customer Statement" }}
+    </div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main" class="report-container">
+    <h1 class="report-title">{{ title|default:"Customer Statement" }}</h1>
+
+    <div class="report-filters">
+        <form method="get" action="">
+            {% if user.is_superuser and show_company_selector and all_companies %}
+                <div>
+                    <label for="company_id_select">{% translate "Company:" %}</label>
+                    <select name="company_id" id="company_id_select" onchange="this.form.submit()">
+                        <option value="">--- {% translate "Select Company" %} ---</option>
+                        {% for c_opt in all_companies %}
+                            {% with c_pk_str=c_opt.pk|stringformat:"s" %}
+                            <option value="{{ c_opt.pk }}" {% if request.GET.company_id == c_pk_str %}selected{% endif %}>
+                                {{ c_opt.name }}
+                            </option>
+                            {% endwith %}
+                        {% endfor %}
+                    </select>
+                </div>
+            {% elif company %}
+                <input type="hidden" name="company_id" value="{{ company.pk }}">
+            {% endif %}
+
+            {% if show_customer_selector and customers_for_selection %}
+                <div>
+                    <label for="customer_id_select">{% translate "Customer:" %}</label>
+                    <select name="customer_id" id="customer_id_select">
+                        <option value="">--- {% translate "Select Customer" %} ---</option>
+                        {% for cust_opt in customers_for_selection %}
+                            {% with cust_pk_str=cust_opt.pk|stringformat:"s" %}
+                            <option value="{{ cust_opt.pk }}" {% if request.GET.customer_id == cust_pk_str %}selected{% endif %}>
+                                {{ cust_opt.name }}
+                            </option>
+                            {% endwith %}
+                        {% endfor %}
+                    </select>
+                </div>
+            {% elif customer %}
+                <input type="hidden" name="customer_id" value="{{ customer.pk }}">
+            {% endif %}
+
+            <div>
+                <label for="start_date_input">{% translate "From Date:" %}</label>
+                <input type="date" name="start_date" id="start_date_input" value="{{ start_date_param }}" required>
+            </div>
+            <div>
+                <label for="end_date_input">{% translate "To Date:" %}</label>
+                <input type="date" name="end_date" id="end_date_input" value="{{ end_date_param }}" required>
+            </div>
+
+            {% for key, value in request.GET.items %}
+                {% if key != 'company_id' and key != 'customer_id' and key != 'start_date' and key != 'end_date' %}
+                    <input type="hidden" name="{{ key }}" value="{{ value }}">
+                {% endif %}
+            {% endfor %}
+
+            <input type="submit" value="{% translate 'View Statement' %}" class="button">
+        </form>
+    </div>
+
+    {% if company and customer and not report_error %}
+        <div class="report-header-info">
+            <h2>
+                {% translate "Statement For" %}:
+                <a href="{% url 'admin:crp_accounting_party_change' customer.pk %}" target="_blank">{{ customer.name }}</a>
+            </h2>
+            <p>
+                {% translate "Company" %}:
+                <a href="{% url 'admin:company_company_change' company.pk %}" target="_blank">{{ company.name }}</a>
+            </p>
+            <p>{% translate "Period" %}: {{ start_date_param|date:"d-M-Y" }} {% translate "to" %} {{ end_date_param|date:"d-M-Y" }}</p>
+            <p>{% translate "Currency" %}: {{ report_currency }}</p>
+        </div>
+
+        {% if opening_balance is not None and lines is not None %}
+            <table class="report-table">
+                <thead>
+                    <tr>
+                        <th>{% translate "Date" %}</th>
+                        <th>{% translate "Transaction Type" %}</th>
+                        <th>{% translate "Reference" %}</th>
+                        <th class="amount">{% translate "Debit" %}</th>
+                        <th class="amount">{% translate "Credit" %}</th>
+                        <th class="amount">{% translate "Balance" %}</th>
+                        <th class="amount">{% translate "Dr/Cr" %}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr class="balance-row">
+                        <td>{{ start_date_param|date:"Y-m-d" }}</td>
+                        <td colspan="4"><strong>{% translate "Opening Balance" %}</strong></td>
+                        <td class="amount"><strong>{{ opening_balance|floatformat:2 }}</strong></td>
+                        <td class="amount">
+                            {% if opening_balance > 0 %}Dr{% elif opening_balance < 0 %}Cr{% endif %}
+                        </td>
+                    </tr>
+                    {% for line in lines %}
+                        <tr>
+                            <td>{{ line.date|date:"Y-m-d" }}</td>
+                            <td>{{ line.transaction_type }}</td>
+                            <td>{{ line.reference }}</td>
+                            <td class="amount">{{ line.debit|floatformat:2|default_if_none:"" }}</td>
+                            <td class="amount">{{ line.credit|floatformat:2|default_if_none:"" }}</td>
+                            <td class="amount">{{ line.balance|floatformat:2 }}</td>
+                            <td class="amount">
+                                {% if line.balance > 0 %}Dr{% elif line.balance < 0 %}Cr{% endif %}
+                            </td>
+                        </tr>
+                    {% empty %}
+                        <tr>
+                            <td colspan="7">{% translate "No transactions found for this customer in the selected period." %}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr class="balance-row">
+                        <td colspan="5"><strong>{% translate "Closing Balance" %}</strong></td>
+                        <td class="amount"><strong>{{ closing_balance|floatformat:2 }}</strong></td>
+                        <td class="amount">
+                            {% if closing_balance > 0 %}Dr{% elif closing_balance < 0 %}Cr{% endif %}
+                        </td>
+                    </tr>
+                </tfoot>
+            </table>
+
+            <div class="report-downloads">
+                {% if customer %}
+                    <!-- ======================================================= -->
+                    <!-- == THIS IS THE CORRECTED PDF LINK                    == -->
+                    <!-- ======================================================= -->
+                    {% url 'crp_accounting_api:admin-download-customer-statement-pdf' customer_pk=customer.pk as pdf_url %}
+                    <a href="{{ pdf_url }}?company_id={{ company.pk }}&start_date={{ start_date_param }}&end_date={{ end_date_param }}" class="button">
+                        {% translate "Download PDF Statement" %}
+                    </a>
+
+                    <!-- This Excel link is already correct and remains unchanged -->
+                    <a href="{% url 'crp_accounting_api:admin-download-customer-statement-excel' customer.pk %}?company_id={{ company.pk }}&start_date={{ start_date_param }}&end_date={{ end_date_param }}" class="button">
+                        {% translate "Download Excel Statement" %}
+                    </a>
+                {% endif %}
+            </div>
+        {% elif company and customer and not report_error %}
+            <p>{% translate "No data available to generate statement for the selected criteria." %}</p>
+        {% endif %}
+
+    {% elif not report_error and not show_company_selector and not show_customer_selector %}
+        <p>{% translate "Please select company, customer, and date range to generate the statement." %}</p>
+    {% endif %}
+</div>
+{% endblock %}

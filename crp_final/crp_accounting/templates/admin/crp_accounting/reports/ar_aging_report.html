@@ -1,0 +1,163 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static report_tags %} {# Assuming report_tags has get_item. Removed admin_urls if not directly used for now #}
+
+{% block extrastyle %}
+    {{ block.super }}
+    {# <link rel="stylesheet" type="text/css" href="{% static "admin/css/reports.css" %}"> #} {# Ensure this file exists if you use it #}
+    <style>
+        .report-container { padding: 20px; }
+        .report-filters { margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: .25rem; }
+        .report-filters label { margin-right: 5px; font-weight: bold; }
+        .report-filters input[type="date"], .report-filters select { margin-right: 15px; padding: .375rem .75rem; border: 1px solid #ced4da; border-radius: .25rem; }
+        .report-filters input[type="submit"] { cursor: pointer; }
+        .report-table { width: 100%; margin-bottom: 1rem; color: #212529; border-collapse: collapse; }
+        .report-table th, .report-table td { padding: .75rem; vertical-align: top; border-top: 1px solid #dee2e6; text-align: left; }
+        .report-table th { background-color: #e9ecef; border-bottom-width: 2px; }
+        .report-table td.amount, .report-table th.amount { text-align: right; }
+        .report-table tfoot td { font-weight: bold; }
+        .report-title { margin-bottom: 1rem; }
+        .report-company-info { margin-bottom: 1.5rem; }
+        .report-company-info h2, .report-company-info p { margin-bottom: 0.5rem; }
+        .report-downloads { margin-top: 20px; }
+        .report-downloads a { margin-right: 10px; }
+    </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+    <div class="breadcrumbs">
+        <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a> › {# Corrected HTML entity #}
+        {# Ensure 'crp_accounting' is the correct app_label used in admin.site.register #}
+        <a href="{% url 'admin:app_list' app_label='crp_accounting' %}">{% translate app_label|capfirst|default:"Crp_Accounting" %}</a> › {# Corrected HTML entity #}
+        {# Replace '#' with a URL to a generic reports index page if you create one #}
+        <a href="#">{% translate 'Reports' %}</a> › {# Corrected HTML entity #}
+        {{ title|default:"AR Aging Report" }}
+    </div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main" class="report-container">
+    <h1 class="report-title">{{ title|default:"AR Aging Report" }}</h1>
+
+    {% if messages %}
+        <ul class="messagelist">
+            {% for message in messages %}
+                <li{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message|capfirst }}</li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    {% if report_error %}
+        <p class="errornote">{{ report_error }}</p> {# Looks fine #}
+    {% endif %}
+
+    <div class="report-filters">
+        <form method="get" action=""> {# Ensure action is empty or points to the correct URL #}
+            {% if user.is_superuser and show_company_selector and all_companies %}
+                <label for="company_id_select">{% translate "Company:" %}</label>
+                <select name="company_id" id="company_id_select">
+                    <option value="">--- {% translate "Select Company" %} ---</option>
+                    {% for c_opt in all_companies %}
+                        {% with c_pk_str=c_opt.pk|stringformat:"s" %} {# Use with block for clarity #}
+                        <option value="{{ c_opt.pk }}" {% if request.GET.company_id == c_pk_str %}selected{% endif %}>
+                            {{ c_opt.name }}
+                        </option>
+                        {% endwith %}
+                    {% endfor %}
+                </select>
+            {% elif company %} {# If not SU or company is already set, pass it as hidden #}
+                 <input type="hidden" name="company_id" value="{{ company.pk }}">
+            {% endif %}
+
+            <label for="as_of_date_input">{% translate "As of Date:" %}</label>
+            <input type="date" name="as_of_date" id="as_of_date_input" value="{{ as_of_date_param }}" required>
+
+            {# Input for aging_buckets #}
+            <label for="aging_buckets_input">{% translate "Aging Buckets (days, comma-separated):" %}</label>
+            <input type="text" name="aging_buckets" id="aging_buckets_input" value="{{ aging_bucket_days_config_str|default:'' }}" placeholder="e.g., 0,30,60,90">
+
+
+            {# Preserve other GET parameters like date filters when company is changed #}
+            {% for key, value in request.GET.items %}
+                {% if key != 'company_id' and key != 'as_of_date' and key != 'aging_buckets' %} {# Also exclude aging_buckets #}
+                    <input type="hidden" name="{{ key }}" value="{{ value }}">
+                {% endif %}
+            {% endfor %}
+
+            <input type="submit" value="{% translate 'View Report' %}" class="button">
+        </form>
+    </div>
+
+    {% if company and not report_error and report_data_available %} {# Changed condition to check report_data_available #}
+        <div class="report-company-info">
+            <h2>
+                {% translate "Company" %}:
+                {# This is where you had NoReverseMatch for crp_accounting_company_change #}
+                {# Ensure 'company_company_change' is the correct name for your Company model admin change view #}
+                {# If your Company model is in 'company' app, and model name is 'Company' #}
+                <a href="{% url 'admin:company_company_change' company.pk %}" target="_blank">{{ company.name }}</a>
+            </h2>
+            <p>{% translate "Report as of" %}: {{ as_of_date_to_display|date:"DATE_FORMAT"|default:as_of_date_param }}</p> {# Use as_of_date_to_display #}
+            <p>{% translate "Currency" %}: {{ report_currency }}</p>
+        </div>
+
+        {% if aging_data %}
+            <table class="report-table">
+                <thead>
+                    <tr>
+                        <th>{% translate "Customer Name" %}</th>
+                        {# The order of columns was different in your previous comment. This matches a more standard aging report. #}
+                        {% for bucket_label in bucket_labels %}
+                            <th class="amount">{{ bucket_label }}</th>
+                        {% endfor %}
+                        <th class="amount">{% translate "Total Outstanding" %}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in aging_data %}
+                        <tr>
+                            <td>
+                                {% if entry.customer_pk %}
+                                {# Ensure 'crp_accounting' is correct app_label for Party model admin #}
+                                {# and 'party_change' is the correct name for Party model admin change view #}
+                                <a href="{% url 'admin:crp_accounting_party_change' entry.customer_pk %}" target="_blank">
+                                    {{ entry.customer_name }}
+                                </a>
+                                {% else %}
+                                    {{ entry.customer_name }}
+                                {% endif %}
+                            </td>
+                            {% for bucket_label in bucket_labels %}
+                                <td class="amount">{{ entry.buckets|get_item:bucket_label|floatformat:2|default:"0.00" }}</td> {# Added default filter #}
+                            {% endfor %}
+                            <td class="amount">{{ entry.total_due|floatformat:2 }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td><strong>{% translate "Grand Totals" %}</strong></td>
+                        {% for bucket_label in bucket_labels %}
+                            <td class="amount"><strong>{{ grand_totals_by_bucket|get_item:bucket_label|floatformat:2|default:"0.00" }}</strong></td> {# Added default filter #}
+                        {% endfor %}
+                        <td class="amount"><strong>{{ grand_total_due_all_customers|floatformat:2 }}</strong></td>
+                    </tr>
+                </tfoot>
+            </table>
+            <div class="report-downloads">
+                {% if company %} {# Ensure company context for download links #}
+                    {# Ensure these URL names are correct as per your urls_api.py #}
+                    {% url 'crp_accounting_api:admin-download-ar-aging-excel' as excel_url %}
+                    {% url 'crp_accounting_api:admin-download-ar-aging-pdf' as pdf_url %}
+                    {# Pass current GET parameters to download links to preserve filters #}
+                    <a href="{{ excel_url }}?{{ request.GET.urlencode }}" class="button">{% translate "Download Excel" %}</a>
+                    <a href="{{ pdf_url }}?{{ request.GET.urlencode }}" class="button">{% translate "Download PDF" %}</a>
+                {% endif %}
+            </div>
+        {% elif not report_error %} {# Simplified condition: if report data was expected but 'aging_data' is empty #}
+            <p>{% translate "No outstanding receivables found for the selected criteria." %}</p>
+        {% endif %}
+    {% elif not report_error and not show_company_selector and not company %}
+        <p>{% translate "Please select a company and date, or ensure your user has an assigned company." %}</p>
+    {% endif %}
+</div>
+{% endblock %}

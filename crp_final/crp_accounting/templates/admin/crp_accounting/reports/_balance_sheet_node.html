@@ -1,0 +1,27 @@
+{% load i18n static l10n humanize math_filters %} {# ADDED math_filters HERE #}
+
+{% for node in nodes %}
+    <tr class="{% if node.type == 'group' %}group-row{% else %}account-row{% endif %}">
+        {# Indentation applied to the first cell #}
+        <td class="bs-name-cell" style="padding-left: {{ node.level|default:0|multiply:1.5|add:1 }}em;">
+            {{ node.name }}
+            {% if node.type == 'account' and node.account_number %}
+                <small class="text-muted">({{ node.account_number }})</small>
+            {% endif %}
+        </td>
+        <td class="numeric">
+            {% if node.balance is not None %}
+                {% with decimal_places=company.currency_decimal_places|default:2 %}
+                    {{ node.balance|floatformat:decimal_places|intcomma }}
+                {% endwith %}
+                 {% if node.currency and node.currency != company.default_currency_code %}
+                    <span class="currency-tag">({{ node.currency }})</span>
+                 {% endif %}
+            {% endif %}
+        </td>
+    </tr>
+    {% if node.children %}
+        {# Recursively include for children, passing company context for decimal_places #}
+        {% include "admin/crp_accounting/reports/_balance_sheet_node.html" with nodes=node.children company=company %}
+    {% endif %}
+{% endfor %}

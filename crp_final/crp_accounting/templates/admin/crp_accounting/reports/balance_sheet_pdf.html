@@ -1,0 +1,156 @@
+<!-- templates/admin/crp_accounting/reports/balance_sheet_pdf.html -->
+{% load humanize %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ report_title }}</title>
+    <style>
+        @page {
+            size: a4 landscape; /* Use landscape mode for a side-by-side layout */
+            margin: 1.5cm;
+        }
+        body {
+            font-family: "Helvetica", "Arial", sans-serif;
+            font-size: 9pt;
+            color: #333;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .header h2 { margin: 0; font-size: 16pt; }
+        .header h3, .header p { margin: 5px 0 0 0; font-size: 11pt; font-weight: normal; }
+
+        /* Main layout table */
+        .layout-table {
+            width: 100%;
+            border-collapse: collapse;
+            vertical-align: top;
+        }
+        .layout-table > tbody > tr > td {
+            width: 50%;
+            vertical-align: top;
+            padding: 0 10px;
+        }
+        .layout-table > tbody > tr > td:first-child { padding-left: 0; }
+        .layout-table > tbody > tr > td:last-child { padding-right: 0; }
+
+        /* Report tables within the layout */
+        .report-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+        }
+        .report-table th, .report-table td {
+            border: 1px solid #ddd;
+            padding: 5px;
+            word-wrap: break-word;
+        }
+        .report-table th {
+            background-color: #f2f2f2;
+            font-size: 11pt;
+            padding: 8px;
+        }
+        .report-table .amount { text-align: right; }
+        .report-table .group-row td { font-weight: bold; }
+        .report-table .total-row td {
+            font-weight: bold;
+            border-top: 2px solid #333;
+            background-color: #e9ecef;
+        }
+        .warning-note {
+            color: red; font-weight: bold; text-align: center; margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h2>{{ company.name }}</h2>
+        <h3>{{ report_title }}</h3>
+        <p>As of: {{ as_of_date_param|date:"F d, Y" }}</p>
+    </div>
+
+    <table class="layout-table">
+        <tr>
+            <!-- ======================= LEFT COLUMN: ASSETS ======================= -->
+            <td>
+                <table class="report-table">
+                    <thead>
+                        <tr>
+                            <th colspan="2">Assets</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for node in assets.hierarchy %}
+                            {% include "admin/crp_accounting/reports/_balance_sheet_node_pdf.html" with node=node %}
+                        {% endfor %}
+                        <tr class="total-row">
+                            <td><strong>Total Assets</strong></td>
+                            <td class="amount"><strong>{{ report_currency_symbol }} {{ assets.total|intcomma }}</strong></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </td>
+
+            <!-- ======================= RIGHT COLUMN: LIABILITIES & EQUITY ======================= -->
+            <td>
+                <!-- Liabilities Section -->
+                <table class="report-table">
+                    <thead>
+                        <tr>
+                            <th colspan="2">Liabilities</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for node in liabilities.hierarchy %}
+                            {% include "admin/crp_accounting/reports/_balance_sheet_node_pdf.html" with node=node %}
+                        {% endfor %}
+                        <tr class="total-row">
+                            <td><strong>Total Liabilities</strong></td>
+                            <td class="amount"><strong>{{ report_currency_symbol }} {{ liabilities.total|intcomma }}</strong></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- Equity Section -->
+                <table class="report-table">
+                    <thead>
+                        <tr>
+                            <th colspan="2">Equity</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for node in equity.hierarchy %}
+                            {% include "admin/crp_accounting/reports/_balance_sheet_node_pdf.html" with node=node %}
+                        {% endfor %}
+                        <tr class="total-row">
+                            <td><strong>Total Equity</strong></td>
+                            <td class="amount"><strong>{{ report_currency_symbol }} {{ equity.total|intcomma }}</strong></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- Grand Total Section -->
+                 <table class="report-table">
+                    <tbody>
+                        <tr class="total-row" style="background-color: #d4edda;"> <!-- A slightly different color for the grand total -->
+                            <td><strong>Total Liabilities and Equity</strong></td>
+                            <td class="amount"><strong>{{ report_currency_symbol }} {{ total_liabilities_and_equity|intcomma }}</strong></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </td>
+        </tr>
+    </table>
+
+    {% if not is_balanced %}
+        <p class="warning-note">
+            Note: The Balance Sheet is Out of Balance! Difference: {{ balance_difference|intcomma }}
+        </p>
+    {% endif %}
+
+</body>
+</html>

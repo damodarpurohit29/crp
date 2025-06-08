@@ -1,0 +1,143 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static report_tags %} {# <--- THE CRUCIAL FIX IS HERE #}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <style>
+        .report-container { padding: 20px; }
+        .report-filters { margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: .25rem; }
+        .report-filters label { margin-right: 5px; font-weight: bold; }
+        .report-filters input[type="date"], .report-filters select { margin-right: 15px; padding: .375rem .75rem; border: 1px solid #ced4da; border-radius: .25rem; }
+        .report-filters input[type="submit"] { cursor: pointer; }
+        .report-table { width: 100%; margin-bottom: 1rem; color: #212529; border-collapse: collapse; }
+        .report-table th, .report-table td { padding: .75rem; vertical-align: top; border-top: 1px solid #dee2e6; text-align: left; }
+        .report-table th { background-color: #e9ecef; border-bottom-width: 2px; }
+        .report-table td.amount, .report-table th.amount { text-align: right; }
+        .report-table tfoot td, .report-table tfoot th { font-weight: bold; }
+        .report-title { margin-bottom: 1rem; }
+        .report-party-info { margin-bottom: 1.5rem; }
+        .report-party-info h2, .report-party-info p { margin-bottom: 0.5rem; }
+        .report-downloads { margin-top: 20px; text-align: right; }
+        .report-downloads a { margin-left: 10px; }
+        .info-message { padding: 10px 15px; background-color: #eef; border: 1px solid #79aec8; color: #365f8e; border-radius: 4px; margin-bottom: 20px; text-align: center;}
+    </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+    <div class="breadcrumbs">
+        <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a> ›
+        <a href="{% url 'admin:app_list' app_label='crp_accounting' %}">{% translate 'Crp_Accounting' %}</a> ›
+        {{ title|default:"Vendor Statement" }}
+    </div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main" class="report-container">
+    <h1 class="report-title">{{ title|default:"Vendor Statement" }}</h1>
+
+    {% if messages %}
+        <ul class="messagelist">{% for message in messages %}<li{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message|capfirst }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if report_error %}<p class="errornote">{{ report_error }}</p>{% endif %}
+
+    <div class="report-filters">
+        <form method="get" action="">
+            {% if user.is_superuser %}
+                <label for="company_id_select">{% translate "Company:" %}</label>
+                <select name="company_id" id="company_id_select" onchange="this.form.submit()">
+                    <option value="">--- {% translate "Select Company" %} ---</option>
+                    {% for c_opt in all_companies %}
+                        {% with c_pk_str=c_opt.pk|stringformat:"s" %}
+                        <option value="{{ c_opt.pk }}" {% if company and company.pk == c_opt.pk or request.GET.company_id == c_pk_str %}selected{% endif %}>{{ c_opt.name }}</option>
+                        {% endwith %}
+                    {% endfor %}
+                </select>
+            {% elif company %}
+                <input type="hidden" name="company_id" value="{{ company.pk }}">
+            {% endif %}
+
+            {% if company %}
+                <label for="supplier_id_select">{% translate "Supplier:" %}</label>
+                <select name="supplier_id" id="supplier_id_select" required>
+                    <option value="">--- {% translate "Select Supplier" %} ---</option>
+                    {% for s_opt in suppliers_for_selection %}
+                        {# This line will now work correctly because report_tags is loaded #}
+                        {% with s_pk_str=s_opt.pk|stringformat:"s" %}
+                        <option value="{{ s_opt.pk }}" {% if selected_supplier_id_param == s_pk_str %}selected{% endif %}>
+                            {{ s_opt.name }}
+                        </option>
+                        {% endwith %}
+                    {% endfor %}
+                </select>
+
+                <label for="start_date_input">{% translate "Start Date:" %}</label>
+                <input type="date" name="start_date" id="start_date_input" value="{{ start_date_param }}" required>
+
+                <label for="end_date_input">{% translate "End Date:" %}</label>
+                <input type="date" name="end_date" id="end_date_input" value="{{ end_date_param }}" required>
+
+                <input type="submit" value="{% translate 'View Statement' %}" class="button">
+            {% endif %}
+        </form>
+    </div>
+
+    {% if report_data_available and company and supplier and statement_data %}
+        <div class="report-party-info">
+            <h2>{% translate "Statement for Supplier" %}: {{ supplier.name }}</h2>
+            <p>{% translate "Company" %}: {{ company.name }}</p>
+            <p>{% translate "Period" %}: {{ start_date_to_display|date:"d-m-Y" }} {% translate "to" %} {{ end_date_to_display|date:"d-m-Y" }}</p>
+            <p>{% translate "Currency" %}: {{ statement_data.report_currency }}</p>
+        </div>
+
+        <table class="report-table">
+            <thead>
+                <tr>
+                    <th>{% translate "Date" %}</th>
+                    <th>{% translate "Transaction Type" %}</th>
+                    <th>{% translate "Reference" %}</th>
+                    <th class="amount">{% translate "Payment / Debit Note" %}</th>
+                    <th class="amount">{% translate "Bill / Credit Note" %}</th>
+                    <th class="amount">{% translate "Balance Due to Supplier" %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>{{ start_date_to_display|date:"d-m-Y" }}</td>
+                    <td colspan="4"><strong>{% translate "Opening Balance" %}</strong></td>
+                    <td class="amount"><strong>{{ statement_data.opening_balance|floatformat:2 }}</strong></td>
+                </tr>
+                {% for line in statement_data.lines %}
+                    <tr>
+                        <td>{{ line.date|date:"d-m-Y" }}</td>
+                        <td>{{ line.transaction_type }}</td>
+                        <td>{{ line.reference }}</td>
+                        <td class="amount">{{ line.payment_or_debit|floatformat:2|default_if_none:"" }}</td>
+                        <td class="amount">{{ line.bill_or_credit|floatformat:2|default_if_none:"" }}</td>
+                        <td class="amount">{{ line.balance|floatformat:2 }}</td>
+                    </tr>
+                {% empty %}
+                    <tr><td colspan="6" style="text-align: center;">{% translate "No transactions found for this supplier in the selected period." %}</td></tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="5"><strong>{% translate "Closing Balance as of" %} {{ end_date_to_display|date:"d-m-Y" }}</strong></td>
+                    <td class="amount"><strong>{{ statement_data.closing_balance|floatformat:2 }}</strong></td>
+                </tr>
+            </tfoot>
+        </table>
+
+        <div class="report-downloads">
+            {% url 'crp_accounting_api:admin-download-vendor-statement-pdf' supplier_pk=supplier.pk as pdf_url %}
+            {% url 'crp_accounting_api:admin-download-vendor-statement-excel' supplier_pk=supplier.pk as excel_url %}
+            <a href="{{ excel_url }}?company_id={{ company.pk }}&start_date={{ start_date_param }}&end_date={{ end_date_param }}" class="button">{% translate "Download Excel" %}</a>
+            <a href="{{ pdf_url }}?company_id={{ company.pk }}&start_date={{ start_date_param }}&end_date={{ end_date_param }}" class="button">{% translate "Download PDF" %}</a>
+        </div>
+    {% elif company and not supplier %}
+        <p class="info-message">{% translate "Please select a supplier to view the statement." %}</p>
+    {% elif company and not report_data_available and request.GET.supplier_id %}
+         <p class="info-message">{% translate "No data available for the selected criteria." %}</p>
+    {% endif %}
+</div>
+{% endblock %}

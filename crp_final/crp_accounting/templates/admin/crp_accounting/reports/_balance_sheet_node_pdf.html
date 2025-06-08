@@ -1,0 +1,24 @@
+<!-- templates/admin/crp_accounting/reports/_balance_sheet_node_pdf.html -->
+{% load mathfilters humanize %}
+
+<tr class="{% if node.type == 'group' %}group-row{% endif %}">
+    <td width="75%">
+        <span style="padding-left: {{ node.level|default:0|mul:20 }}px;">
+            {{ node.name }}
+            {% if node.type == 'account' and node.account_number %}
+                <small>({{ node.account_number }})</small>
+            {% endif %}
+        </span>
+    </td>
+    <td class="amount" width="25%">
+        {% if node.balance is not None %}
+            {{ report_currency_symbol }} {{ node.balance|intcomma }}
+        {% endif %}
+    </td>
+</tr>
+
+{% if node.children %}
+    {% for child_node in node.children %}
+        {% include "admin/crp_accounting/reports/_balance_sheet_node_pdf.html" with node=child_node %}
+    {% endfor %}
+{% endif %}
